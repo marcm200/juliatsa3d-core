@@ -255,9 +255,9 @@ implementation would need ages to move through the world cube. In higher refinem
 value should be provided. Although higher side length might be possible (not tested rigorously), the 2^11 cube
 needs already about 24 GB of file space.
 - The software was designed mainly for speed and complete memory usage. If an error occurs, it prompts a message and exits immediately "dirty", leaving garbage collection to the operating system.
-- Cycle detection starts in every refinement level anew. Therefore cycle assigned colors can differ.
+- Cycle detection starts in every refinement level anew. Therefore cycle assigned colors can differ from level to level.
 - Only the C value can currently be used as a triplex interval, A and B are triplex numbers and the other variables
-E to Q con only be provided as simple floating point values.
+E to Q can only be provided as simple floating point values.
 
 
 ## (5) Contact
@@ -273,10 +273,10 @@ Marc Meidlinger, November 2019
 
 ## (6) Functions implemented
 
-Formulas used are from:
-(1) www.bugman123.com/Hypercomplex/index.html#JuliaQuaternion
-(2) fractalforums.org/fractal-mathematics-and-new-theories/28/brand-new-method-for-true-3d-fractals/3118
-(3) constructed by me
+Implemented formulas are from:
+1. https://www.bugman123.com/Hypercomplex/index.html#JuliaQuaternion
+2. https://fractalforums.org/fractal-mathematics-and-new-theories/28/brand-new-method-for-true-3d-fractals/3118
+3. constructed by me
 
 Iteration is defined as: {x,y,z}_new := f({x,y,z}_old} + { C1,C2,C3 }
 
@@ -284,16 +284,16 @@ Note: A1 etc denotes the x-value of the 3d-parameter A as given by the command-l
 
 <table>
 <tr><td>func=</td><td>author</td><td>formula f</td></tr>
-<tr><td>MAKIN</td></td>David Makin, 1</td><td></td></tr>
-<tr><td>BAIRD</td></td>Eric Baird, 1</td></td></tr>
-<tr><td>BAIRD5</td></td>3</td><td>A1*x+x^3-3xy^2-z^2,<br>A2*y+3yx^2-y^3,<br>z^3-y^3-x^3</td></tr>
-<tr><td>BRISTOR</td></td>Doug Bristor, 1</td></tr>
-<tr><td>MAKINEXP4</td></td>3</td><td>x^4-y^4-B1*z^2,<br>A2*x+2xy,<br>z^4-x^2*y^2</td></tr>
-<tr><td>MAKINEXP4B</td></td>3</td><td>x^5-y^5-B1*z^4,<br>A2*x+2*x^2*y^2,<br>z^2-y^2-x^2</td></tr>
-<tr><td>MAKINEXP5</td></td>3</td><td>M*x^2+x^3-2*N*xy-M*y^2-3*x*y^2+H*z^2,<br>N*x^2+2*M*xy+3*x^2*y-N*y^2-y^3,<br>2xz-2yz</td></tr>
-<tr><td>SMITH</td></td>Tyler Smith, 2</td></tr>
-<tr><td>TRICZ3B</td></td>3</td><td>A1*x+x^3-3xy^2-B1*z^3,<br>A2*y+3x^2*y-y^3,<br>z^3-y^3-x^3</td></tr>
-<tr><td>TRICZ4B</td></td>3</td><td>A1*x+x^4-6x^2*y^2+y^4-B1*z^2,<br>A2*y+4x^3*y-4y^3*x,<br>z^3-y^3-x^3</td></tr>
-<tr><td>TRICZ5D</td></td>3</td><td>A1*x+B1*z^2+x^5-10x^3*y^2-5x*y^4,<br>E*y+5*x^4*y-10*x^2*y^3+y^5,<br>z^2-y^2-x^2</td></tr>
+<tr><td>MAKIN</td><td>David Makin, 1</td><td></td></tr>
+<tr><td>BAIRD</td><td>Eric Baird, 1</td><td></td></tr>
+<tr><td>BAIRD5</td><td>3</td><td>A1*x+x^3-3xy^2-z^2,<br>A2*y+3yx^2-y^3,<br>z^3-y^3-x^3</td></tr>
+<tr><td>BRISTOR</td><td>Doug Bristor, 1</td><td></td></tr>
+<tr><td>MAKINEXP4</td><td>3</td><td>x^4-y^4-B1*z^2,<br>A2*x+2xy,<br>z^4-x^2*y^2</td></tr>
+<tr><td>MAKINEXP4B</td><td>3</td><td>x^5-y^5-B1*z^4,<br>A2*x+2*x^2*y^2,<br>z^2-y^2-x^2</td></tr>
+<tr><td>MAKINEXP5</td><td>3</td><td>M*x^2+x^3-2*N*xy-M*y^2-3*x*y^2+H*z^2,<br>N*x^2+2*M*xy+3*x^2*y-N*y^2-y^3,<br>2xz-2yz</td></tr>
+<tr><td>SMITH</td><td>Tyler Smith, 2</td><td></td></tr>
+<tr><td>TRICZ3B</td><td>3</td><td>A1*x+x^3-3xy^2-B1*z^3,<br>A2*y+3x^2*y-y^3,<br>z^3-y^3-x^3</td></tr>
+<tr><td>TRICZ4B</td><td>3</td><td>A1*x+x^4-6x^2*y^2+y^4-B1*z^2,<br>A2*y+4x^3*y-4y^3*x,<br>z^3-y^3-x^3</td></tr>
+<tr><td>TRICZ5D</td><td>3</td><td>A1*x+B1*z^2+x^5-10x^3*y^2-5x*y^4,<br>E*y+5*x^4*y-10*x^2*y^3+y^5,<br>z^2-y^2-x^2</td></tr>
 </table>
 
