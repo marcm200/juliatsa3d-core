@@ -2,7 +2,10 @@
 
 3D Julia sets with a mathematical guarantee
 
-Extension of the articles into R^3:
+![example Julia sets](./_juliasets.gif)
+
+Extension of the articles into R<sup>3</sup>:
+
 ```
 "Images of Julia sets that you can trust"
 by Luiz-Henrique de Figueiredo, Diego Nehab, Jofge Stolfi, Joao Batista Oliveira-
@@ -14,7 +17,7 @@ by Luiz-Henrique de Figueiredo, Diego Nehab, Jofge Stolfi, Joao Batista Oliveira
 
 ## Purpose of this C++-code:
 
-Command line tool to compute multivariate polynomial Julia sets with triplex numbers in R^3 using
+Command line tool to compute multivariate polynomial Julia sets with triplex numbers in R<sup>3</sup> using
 cell mapping and interval arithmetics.
 
 ### Disclaimer
@@ -35,8 +38,6 @@ the code comes with no warranty.
 
 ## (0) Quick starting example:
 
-![example Julia sets](./_juliasets.gif)
-
 Compile main.cpp with any suitable C compiler supporting 64-bit integers (best with mathematical optimizations
 for speed enabled). 
 
@@ -55,18 +56,17 @@ using already computed data and saves 3 bitmaps.
 
 ## (1) Background
 
-Tiny cubes in R^3 are judged as definite interior or exterior according to the above articles.
+Tiny cubes in R<sup>3</sup> are judged as definite interior or exterior according to the above articles
 (see detailed description in my project juliatsacore).
 
 The main purpose here is to identify attracting periodic cycles and their immediate basins.
 
 The software first tries to find a file named `_in.raw`. If that exists
-the raw data is loaded and computation will be resumed with the already judged puted cells. 
+the raw data is loaded and computation will be resumed with the already judged cells. 
 
 A special case is when the read-in data was computed with half the current command line screen
 width. In that case the read-in data is doubled, every voxel is copied to a 2x2x2 grid keeping
-its color if applicable (otherwise set to gray) and computation resumes in the higher screen width - simulating the refinement process
-as described in the article, saving computation time. 
+its color if applicable (otherwise set to gray) and computation resumes in the higher screen width - simulating the refinement process as described in the article - and saving a lot of time when trying to calculate a large set. 
 
 The output of the code are several files:
 
@@ -87,13 +87,13 @@ any value p/q where q is a power
 of 2 can be accurately represented. Numbers provided are internally made
 representable by performing: floor(number provided * 2^25) / 2^25.
 
-These numbers are written to the log file.
-
 The desired and necessary C++ data type for the computation of the bounding box can be commented in or out
 at the start of the source code:
 
 `#define _DOUBLE`
+
 `#define _LONGDOUBLE`
+
 `#define _QUADMATH`
 
 and then recompiling to ensure enough precision to not encounter rounding errors.
@@ -103,7 +103,7 @@ used C++ data type is offering enough bits for the current resolution,
 function and triplex number range.
 
 Memory is allocated in a row-based manner from first to last occurance of a gray cell at read-in time from the
-data. Some sets have very filigree and isolated interior regions and can be computed to a higher level as others.
+data. Some sets have very filigree and isolated interior regions and can be computed to a higher level than others.
 
 If interior cells were found, a short notice is printed on the screen.
 
