@@ -286,14 +286,14 @@ Note: A1 etc denotes the x-value of the 3d-parameter A as given by the command-l
 <tr><td>func=</td><td>author</td><td>formula f</td></tr>
 <tr><td>MAKIN</td><td>David Makin, 1</td><td></td></tr>
 <tr><td>BAIRD</td><td>Eric Baird, 1</td><td></td></tr>
-<tr><td>BAIRD5</td><td>3</td><td>A1*x+x^3-3xy^2-z^2,<br>A2*y+3yx^2-y^3,<br>z^3-y^3-x^3</td></tr>
+<tr><td>BAIRD5</td><td>3</td><td>A1*x+x<sup>3</sup>-3xy²-z²,<br>A2*y+3yx²-y<sup>3</sup>,<br>z<sup>3</sup>-y<sup>3</sup>-x<sup>3</sup></td></tr>
 <tr><td>BRISTOR</td><td>Doug Bristor, 1</td><td></td></tr>
-<tr><td>MAKINEXP4</td><td>3</td><td>x^4-y^4-B1*z^2,<br>A2*x+2xy,<br>z^4-x^2*y^2</td></tr>
-<tr><td>MAKINEXP4B</td><td>3</td><td>x^5-y^5-B1*z^4,<br>A2*x+2*x^2*y^2,<br>z^2-y^2-x^2</td></tr>
-<tr><td>MAKINEXP5</td><td>3</td><td>M*x^2+x^3-2*N*xy-M*y^2-3*x*y^2+H*z^2,<br>N*x^2+2*M*xy+3*x^2*y-N*y^2-y^3,<br>2xz-2yz</td></tr>
+	<tr><td>MAKINEXP4</td><td>3</td><td>x<sup>4</sup>-y<sup>4</sup>-B1*z²,<br>A2*x+2xy,<br>z<sup>4</sup>-x²*y²</td></tr>
+<tr><td>MAKINEXP4B</td><td>3</td><td>x<sup>5</sup>-y<sup>5</sup>-B1*z<sup>4</sup>,<br>A2*x+2x²*y²,<br>z²-y²-x²</td></tr>
+<tr><td>MAKINEXP5</td><td>3</td><td>M*x²+x<sup>3</sup>-2*N*xy-M*y²-3xy²+H*z²,<br>N*x²+2*M*xy+3yx²-N*y²-y<sup>3</sup>,<br>2xz-2yz</td></tr>
 <tr><td>SMITH</td><td>Tyler Smith, 2</td><td></td></tr>
-<tr><td>TRICZ3B</td><td>3</td><td>A1*x+x^3-3xy^2-B1*z^3,<br>A2*y+3x^2*y-y^3,<br>z^3-y^3-x^3</td></tr>
-<tr><td>TRICZ4B</td><td>3</td><td>A1*x+x^4-6x^2*y^2+y^4-B1*z^2,<br>A2*y+4x^3*y-4y^3*x,<br>z^3-y^3-x^3</td></tr>
-<tr><td>TRICZ5D</td><td>3</td><td>A1*x+B1*z^2+x^5-10x^3*y^2-5x*y^4,<br>E*y+5*x^4*y-10*x^2*y^3+y^5,<br>z^2-y^2-x^2</td></tr>
+<tr><td>TRICZ3B</td><td>3</td><td>A1*x+x<sup>3</sup>-3xy²-B1*z<sup>3</sup>,<br>A2*y+3yx²-y<sup>3</sup>,<br>z<sup>3</sup>-y<sup>3</sup>-x<sup>3</sup></td></tr>
+<tr><td>TRICZ4B</td><td>3</td><td>A1*x+x<sup>4</sup>-6x²*y²+y<sup>4</sup>-B1*z²,<br>A2*y+4yx<sup>3</sup>-4xy<sup>3</sup>,<br>z<sup>3</sup>-y<sup>3</sup>-x<sup>3</sup></td></tr>
+<tr><td>TRICZ5D</td><td>3</td><td>A1*x+B1*z²+x<sup>5</sup>-10x<sup>3</sup>*y²-5x*y<sup>4</sup>,<br>E*y+5*x<sup>4</sup>*y-10*x²*y<sup>3</sup>+y<sup>5</sup>,<br>z²-y²-x²</td></tr>
 </table>
 
