@@ -90,11 +90,9 @@ representable by performing: floor(number provided * 2^25) / 2^25.
 The desired and necessary C++ data type for the computation of the bounding box can be commented in or out
 at the start of the source code:
 
-`#define _DOUBLE`
-
-`#define _LONGDOUBLE`
-
-`#define _QUADMATH`
+`#define _DOUBLE
+#define _LONGDOUBLE
+#define _QUADMATH`
 
 and then recompiling to ensure enough precision to not encounter rounding errors.
 
@@ -114,7 +112,7 @@ Main output is the information about cycles and a 2D bitmap that has been deduce
 by sending a virtual screen through space picking up colors as the screen intersects with visible parts of the object.
 Colors are dimmed according to distance to observer and angle of
 normal surface vector to observer view axis (straight to the middle of the world cube).
-The internal viewer can be switch off by using the TWDB=n command line parameter (see below).
+The internal viewer can be switched off by using the TWDB=n command line parameter (see below).
 
 In the lower left corner of the image are some colored rectangles. Two adjacent ones represent one 
 cycle - the left color being the immediate
@@ -155,39 +153,37 @@ Compute a small version of the basilica (deleting `_in.raw` beforehand).
 
 `juliatsa3dcore_d.exe len=8 cmd=calc c=-1,0,0 func=makin range=2`
 
-Rename the final files `_3d.raw` to `_in.raw`
+Rename the final file `_3d.raw` to `_in.raw`
 
 Then start the software again with double the screen width, i.e. len=9 and changing the command to cmd=period:
 
 `juliatsa3dcore_d.exe len=9 cmd=period c=-1,0,0 func=makin range=2`
 
-The software uses the already computed image to build a bigger version. Afterwards delete `_in.raw`.
+The software uses the already computed data to build a larger set. Afterwards delete `_in.raw`.
 
-(d) interesting sets
+#### (d) Some interesting sets
 
-Some interesting parameters. Note, the len value is the lowest at which interior cells are found. For speed reasons,
+Note, the len value is the lowest at which interior cells are found. For speed reasons,
 computation
 should be done in an increasing len order starting from e.g. 8 as described in paragraph (c) above.
 
-- 3 fixpoints
+- 3 fixpoints<br>
 `juliatsa3dcore_d len=8 func=tricz4b cmd=period ci=0,0,-6710887 ai=36909875,36909875,36909875 bi=-6710887,-6710887,-6710887 range=2`
 
-- period-6 cycle
-`juliatsa3dcore_d func=MAKIN len=14 cmd=period c=-1.13427734375,0.237548828125,-0.00244140625 range=2 twdb=3`
-<b>Note</b>, this set needed around two days to be fully computed and analyzed for cycles. It uses the
+- period-6 cycle<br>
+`juliatsa3dcore_d func=MAKIN len=14 cmd=period c=-1.13427734375,0.237548828125,-0.00244140625 range=2 twdb=3`<br><b>Note</b>, this set needed around two days to be fully computed and analyzed for cycles. It uses the
 external viewer.
 
-- period-3 cycle
-`juliatsa3dcore_d len=11 cmd=period func=bristor range=2 c=-0.109375,-0.734375,-0.234375 range=2`
+- period-3 cycle<br>
+`juliatsa3dcore_d len=11 cmd=period func=bristor range=2 c=-0.109375,-0.734375,-0.234375`
 
-- period-2 cycle
+- period-2 cycle<br>
 `juliatsa3dcore_d func=MAKINEXP4 len=9 cmd=period c=-1.09375,0.1875,-0.984375 range=2 a=-0.25,-0.25,-0.25 b=0.5,0.5,0.5`
 
 
 ## (3) Command-line parameters
 
-`FUNC=string` (if not provided, standard value is MAKIN)
-The desired function to use. Implemented are the functions in paragraph 5.
+`FUNC=string` (if not provided, standard value is MAKIN)<br>The desired function to use. Implemented are the functions in paragraph 5.
 
 `CMD=string` (standard value PERIOD)
 1. CMD=CALC: The software computes the set, saves the final data and an image of the interior if
@@ -207,43 +203,38 @@ For the first 4 different cycles, the following color combinations are used (imm
 
 For further cycles a shuffled version of a color palette is used (untested).
 
-<b>Note:</b>Cycle detection currently cannot be interrupted and resumed.
+<b>Note:</b> Cycle detection currently cannot be interrupted and resumed.
 
-`LEN=integer` (standard value 8)
-	The cube is set to 2^LEN x 2^LEN x 2^LEN voxels.
-	Images should be at least 2^8 pixels and can go up to 2^31 in principle. The largest I computed thus far is, however, 2^14 pixels in width for specific sets if memory is sufficient.
+`LEN=integer` (standard value 8)<br>
+The cube is set to 2^LEN x 2^LEN x 2^LEN voxels. Images should be at least 2^8 pixels and can go up to 2^31 in principle. The largest I computed thus far is, however, 2^14 pixels in width for specific sets if memory is sufficient.
 
-'C=doublex,doubley,doublez` or
+`C=doublex,doubley,doublez` or
 `C=doublex0,doublex1,doubley0,doubley1,doublez0,doublez1` or
 `CI=nx,ny,nz` or 
-`CI=nx0,nx1,ny0,ny1,nz0,nz1`
+`CI=nx0,nx1,ny0,ny1,nz0,nz1`<br>Sets the seed value to a triplex number (3 values provided) or an interval (6 values).
+The double values are made representable as described earlier, the CI values are interpreted
+as 64bit integers and serve as the enumerator of a rational with constant denominator 2^25.
+E.g. nx is converted to nx*2^-25 as floating point. 
 
-	Sets the seed value to a triplex number (3 values provided) or an interval (6 values).
-	The double values are made representable as described earlier, the CI values are interpreted
-	as 64bit integers and serve as the enumerator of a rational with constant denominator 2^25.
-	E.g. nx is converted to nx*2^-25 as floating point. This comes in handy for some values which would
-	need numerous digits after the decimal point.
+`A=doublex,doubley,doublez` or `B=doublex,doubley,doublez` or`AI=nx,ny,nz` or `BI=nx,ny,nz`<br>
+Some functions use additional triplex parameters. Notation as for C value.
 
-`A=doublex,doubley,doublez` or `B=doublex,doubley,doublez`
-`AI=nx,ny,nz` or `BI=nx,ny,nz`
-	Some functions use additional triplex parameters. Notation as for C value.
-
-`E,F,G,...Q=double`
-	Further one-valued parameters.
-	Note, those values can currently not be entered as an intger enumerator like A, B or C.
+`E,F,G,...Q=double`<br>
+Further one-valued parameters.
+Note, those values can currently not be entered as an intger enumerator like A, B or C.
 
 <b>Note:</b> Floating point numbers given in the command line as parameters are always treated as C++ double, no matter 
 what underlying data type is used in the binary.
 
-`RANGE=integer` (standard value 4)
-The cube in R^3 where the whole Julia set is definitely contained is set to -RANGE .. +RANGE in
-every axis. (See limitations).
+`RANGE=integer` (standard value 4)<br>
+The cube in R<sup>3</sup> where the whole Julia set is contained is set to -RANGE .. +RANGE in
+every axis.
 
-`GRAY`
+`GRAY`<br>
 The internal viewer depicts the shape of the gray cells in space, no matter if interior cells are present (then
 standard would be to show the interior cells) or not.
 
-`TWDB=n`
+`TWDB=n`<br>
 This disables the internal viewer and thus does not construct a final image. It saves bitmap-type data in a file
 named "bc1.ccb" (no interior cells present) or "bc1per.ccb" (present) that can be used in my cube-viewer project
 to show the objects from different observer positions.
