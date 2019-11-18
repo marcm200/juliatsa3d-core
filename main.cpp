@@ -2032,7 +2032,7 @@ void Screen::setObserver(Coord& obsUL,Coord& rvx,Coord& rvy,Coord& Mcube) {
 }
 
 void Screen::dimm(const double dimmingFactor,const int32_t s0,const int32_t s1) {
-	int32_t breite=s0-s1; // erste ja GRö?ER im Index
+	int32_t breite=s0-s1; // erste ja GRÃ¶?ER im Index
 	double df=1.0; 
 	if (breite<=0) breite=1;
 	
@@ -2070,7 +2070,7 @@ void Screen::slide(void) {
 	
 	int32_t maxanzschritte=2*(int)len;
 	schritte=maxanzschritte;
-	int32_t intersectidx0=-1,intersectidx1=-1; // invers, d.h. je kleiner Index, desto näher an Cube
+	int32_t intersectidx0=-1,intersectidx1=-1; // invers, d.h. je kleiner Index, desto nÃ¤her an Cube
 	int32_t erster=1;
 	const int32_t XLEN=lenx;
 	const int32_t YLEN=leny;
@@ -2447,7 +2447,7 @@ int main(int argc,char** argv) {
 	getBoundingBoxfA=getBoundingBoxfA_makin;
 	_FUNC=FUNC_MAKIN;
 
-	printf("juliatza3dcore\n  CMD=CALC or CMD=PERIOD\n  FUNC=string / GRAY / TWDB=n / LEN=n / RANGE=n\n");
+	printf("juliatsa3dcore\n  CMD=CALC or CMD=PERIOD\n  FUNC=string / GRAY / TWDB=n / LEN=n / RANGE=n\n");
 	printf("  C=x,y,z or x,x,y,y,z,z or CI=nx,ny,nz or CI=nx0,nx1,ny0,ny1,nz0,nz1\n");
 	printf("  A,B=x,y,z or AI,BI=nx,ny,nz / E,F,...Q=r\n");
 	flog=fopen("juliatsa3dcore.log","at");
