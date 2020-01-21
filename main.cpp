@@ -3,6 +3,7 @@
 #include "string.h"
 #include "quadmath.h"
 #include "stdint.h"
+#include "time.h"
 
 
 // /////////////////////////////////////////
@@ -12,51 +13,69 @@
 
 #define _DOUBLE
 //#define _LONGDOUBLE
-//#define _QUADPREC
+//#define _QUADMATH
+//#define _F107
 
 // /////////////////////////////////////////
 
 typedef uint16_t *PDBYTE;
 
-#ifdef _QUADPREC
+#ifdef _QUADMATH
 typedef __float128 NTYP;
 const char NNTYPSTR[]="f128_";
-const int32_t _BITSNTYP=113;
+const char NTS[]="QD";
+inline void minimaxQDAB(__float128&,__float128&,const __float128,const __float128);
+inline void minimaxQDABCD(__float128&,__float128&,const __float128,const __float128,const __float128,const __float128);
 #endif
+
 #ifdef _LONGDOUBLE
 typedef long double NTYP;
 const char NNTYPSTR[]="ld_";
-const int32_t _BITSNTYP=63;
+const char NTS[]="LD";
+inline void minimaxldAB(long double&,long double&,const long double,const long double);
+inline void minimaxldABCD(long double&,long double&,const long double,const long double,const long double,const long double);
 #endif
+
 #ifdef _DOUBLE
 typedef double NTYP;
 const char NNTYPSTR[]="";
-const int32_t _BITSNTYP=53;
+const char NTS[]="D";
+inline void minimaxdAB(double&,double&,const double,const double);
+inline void minimaxdABCD(double&,double&,const double,const double,const double,const double);
+#endif
+
+#ifdef _F107
+#include "f107_o.cpp"
+typedef f107_o NTYP;
+const char NNTYPSTR[]="f107_";
+const char NTS[]="F1";
+inline void minimaxF107AB(f107_o&,f107_o&,const f107_o,const f107_o);
+inline void minimaxF107ABCD(f107_o&,f107_o&,const f107_o,const f107_o,const f107_o,const f107_o);
 #endif
 
 enum { CMD_CALC=1,CMD_PERIODICITY=2 };
 
 enum {
-	FUNC_BAIRD=0,FUNC_BRISTOR=1,FUNC_MAKIN=2,FUNC_SMITH=3,
-	FUNC_BAIRD5=4,FUNC_TRICZ3B=5,FUNC_TRICZ4B=6,
-	FUNC_MAKINEXP4=7,FUNC_MAKINEXP4B=8,FUNC_TRICZ5D=9,
-	FUNC_MAKINEXP5=10
+	FUNC_BAIRD=0,FUNC_BRISTOR,FUNC_MAKIN,FUNC_SMITH,
+	FUNC_BAIRD5,FUNC_TRICZ3B,FUNC_TRICZ4B,
+	FUNC_MAKINEXP4,FUNC_MAKINEXP4B,FUNC_TRICZ5D,
+	FUNC_MAKINEXP5,FUNC_SH1,FUNC_SH2,FUNC_SH17,FUNC_SH43,
+	
+	funcanz
 };
 
-const int32_t funcanz=FUNC_MAKINEXP5+1;
 const int32_t MAXPTR=2048;
 
 const char funcname[][32] = {
-	"BAIRD","BRISTOR","MAKIN","SMITH",
-	"BAIRD5","TRICZ3B","TRICZ4B",
-	"MAKINEXP4","MAKINEXP4B","TRICZ5D","MAKINEXP5"
+	"BAIRD","BRISTOR","MAKIN","SMITH","BAIRD5","TRICZ3B","TRICZ4B",
+	"MAKINEXP4","MAKINEXP4B","TRICZ5D","MAKINEXP5","SH1","SH2",
+	"SH17","SH43"
 };
 
 int32_t SCREENWIDTH=256;
 NTYP RANGE0=-4;
 NTYP RANGE1= 4;
 
-const int32_t DBYTEMAX=(1 << 16);
 const int32_t MAXFATOUCOMPONENTS=65500;
 const int32_t MAXCYCLES=110;
 const int32_t FATOUCOMPONENTCOLOROFFSET=24;
@@ -64,7 +83,7 @@ const int32_t FATOUCOMPONENTCOLOROFFSET=24;
 const int64_t CHUNKSIZE=(int64_t)1 << 30; 
 
 // for 32bit operating systems
-//const int64_t CHUNKSIZE=(int64_t)1 << 29; 
+//const int64_t CHUNKSIZE=(int64_t)1 << 28; 
 
 // color constants for cells
 const uint16_t CC_GRAY=0;
@@ -72,6 +91,8 @@ const uint16_t CC_WHITE=0b01;
 const uint16_t CC_BLACK=0b10;
 const uint16_t CC_GRAYPOTW=0b11;
 
+
+// defines as small functions
 
 #define LOGMSG(TT) {\
 	printf(TT);\
@@ -83,9 +104,15 @@ const uint16_t CC_GRAYPOTW=0b11;
 	fprintf(flog,TT,AA); fflush(flog); \
 }
 
-#define TRIM(WW)\
-	if ( WW < 0) WW=0;\
-	else if (WW >= SCREENWIDTH) WW=SCREENWIDTH-1;
+#define CUBE_LIES_ENTIRELY_IN_SPECEXT(CC) \
+(\
+	(CC.x1 < RANGE0) ||\
+	(CC.x0 > RANGE1) ||\
+	(CC.y1 < RANGE0) ||\
+	(CC.y0 > RANGE1) ||\
+	(CC.z1 < RANGE0) ||\
+	(CC.z0 > RANGE1) \
+)
 
 #define LOGMSG3(TT,AA,BB) {\
 	printf(TT,AA,BB);\
@@ -102,6 +129,8 @@ const uint16_t CC_GRAYPOTW=0b11;
 	fprintf(flog,TT,AA,BB,CC,DD); fflush(flog); \
 }
 
+
+// structs
 
 // a voxel representing a tiny cube in R^3-space
 // interval arithmetics boundaries
@@ -157,6 +186,7 @@ struct  Coord {
 	float dimmingFactor; // dimming of RGB values dependent on distance and normal vector
 	uint8_t R,G,B;
 	int32_t intersectsWithVisibleObjectAtStep; // already intersected with object
+	int32_t schrittklein,schrittgross;
 		
 	Coord(const Coord&);
 	Coord(const double,const double,const double);
@@ -173,6 +203,55 @@ struct  Coord {
 };
 
 typedef Coord* PCoord;
+
+struct Parent {
+	uint16_t BX,BY,BZ; 
+};
+
+typedef Parent *PParent;
+
+// one reverse cell graph tile and its parents (preimages before the iteration)
+struct RevCGBlock {
+	int32_t howmany; 
+	// flag, whether this tile has to be checked (again) for gray pixels and the bounding
+	// boxes' hits after one iteration
+	int8_t tovisit;
+	// how many parents are needed here? First pass result
+	int32_t memused;
+	// parents as variable size array
+	Parent* parent;
+		
+	RevCGBlock();
+	void addParent(const int32_t,const int32_t,const int32_t);
+};
+
+struct ParentManager {
+	Parent* lastallocated;
+	int32_t memused;
+	int32_t freefrom;
+	int32_t anzptr;
+	PParent ptr[MAXPTR];
+	
+	ParentManager();
+	virtual ~ParentManager();
+	
+	Parent* getParentSpace(const int32_t);
+};
+
+typedef RevCGBlock *PRevCGBlock;
+
+struct RevCGBlockManager {
+	RevCGBlock* lastallocated;
+	int32_t memused;
+	int32_t freefrom;
+	int32_t anzptr;
+	PRevCGBlock ptr[MAXPTR];
+	
+	RevCGBlockManager();
+	virtual ~RevCGBlockManager();
+	
+	RevCGBlock* getMemory(const int32_t);
+};
 
 // memory manager for allocating Coords in screen
 struct ArrayMgrCoord {
@@ -231,7 +310,8 @@ struct Data3Ddyn {
 	// every gray or black cells is contained in this cube
 	int32_t encx0,encx1,ency0,ency1,encz0,encz1;
 	Zeile *planesZY; // indexed by Z*SCREENWIDTH+Y
-
+	PRevCGBlock* revcgZ_YX;
+	
 	Data3Ddyn();
 	virtual ~Data3Ddyn();
 	
@@ -245,21 +325,34 @@ struct Data3Ddyn {
 
 	// main routines to compute a cell's color
 	void search_specext(void);
-	void search_directWhite(void);
+	void search_definite(void);
+	void search_potw(void);
 	int coloring_black(void);
+	void markAllRevCGtovisit(const int32_t);
 };
 
 
 // global variables
+int32_t REVCGBITS=4,REVCGBLOCKWIDTH;
+int64_t checkclockatbbxcount0=10000000;
+int64_t checkclockatbbxadd=(1 << 26);
+int32_t CLOCK1HOUR=CLOCKS_PER_SEC*3600;
+int32_t REVCGmaxnumber,REVCGmaxnumberQ;
+ParentManager* parentmgr=NULL;
+RevCGBlockManager* revcgmanager=NULL;
+int64_t ctrbbxfa=0;
+int64_t ctrcpf3ausser=0;
 double scaleRangePerPixel,scalePixelPerRange;
 int64_t DENOM225=1 << 25;
+int64_t DENOM208=1 << 8;
+int32_t _CYCLE1COLOR=-1;
 // coefficients for functions
 NTYP tricC0x,tricC1x,tricC0y,tricC1y,tricC0z,tricC1z;
 NTYP tricAx,tricAy,tricAz;
 NTYP tricBx,tricBy,tricBz;
-NTYP varE=0.0,varF=0.0,varG=0.0,varH=0.0;
-NTYP varJ=0.0,varK=0.0,varL=0.0,varM=0.0;
-NTYP varN=0.0,varO=0.0,varP=0.0,varQ=0.0;
+double varE=0.0,varF=0.0,varG=0.0,varH=0.0;
+double varJ=0.0,varK=0.0,varL=0.0,varM=0.0;
+double varN=0.0,varO=0.0,varP=0.0,varQ=0.0;
 // main object
 Data3Ddyn* data;
 // pointer to current used function
@@ -270,7 +363,6 @@ int64_t ctrweiss=0,ctrgrau=0,ctrpotwgrau=0,ctrschwarz=0;
 // memory managers
 ArrayMgrDByte mgrVoxel;
 ArrayMgrCoord mgrCoord;
-int bitpower=1;
 int GRAY_IS_TRANSPARENT=1;
 int _TWDBITCUBE=-1;
 int CMD=CMD_PERIODICITY;
@@ -303,9 +395,22 @@ char* upper(char* s) {
 }
 
 // converter function: triplex number in virtual screen coordinates
+// trims the before floor-ing to stay in represantable range
+#ifndef _QUADMATH
 inline int32_t scrcoord0(const NTYP a) {
+	if (a <= RANGE0) return 0;
+	if (a >= RANGE1) return (SCREENWIDTH-1);
 	return (int32_t)floor( (a - RANGE0) * scalePixelPerRange );
 }
+#endif
+
+#ifdef _QUADMATH
+inline int32_t scrcoord0(const NTYP a) {
+	if (a <= RANGE0) return 0;
+	if (a >= RANGE1) return (SCREENWIDTH-1);
+	return (int32_t)floorq( (a - RANGE0) * scalePixelPerRange );
+}
+#endif
 
 inline NTYP maximumD(const NTYP a,const NTYP b,const NTYP c,const NTYP d) {
 	NTYP m=a;
@@ -336,16 +441,99 @@ inline NTYP maximumD(const NTYP a,const NTYP b) {
 // implemented 3d functions
 // bounding cubes in interval arithmetics
 // formulas generated by a symbolic parser
+
 inline void getBoundingBoxfA_tricz5d(SpaceCube& A,SpaceCube& fA) {
+	ctrbbxfa++;
+	
+	#ifdef _F107
+	NTYP x02=A.x0*A.x0;
+	NTYP x03=x02*A.x0;
+	NTYP x04=x02*x02;
+	NTYP y02=A.y0*A.y0;
+	NTYP y03=y02*A.y0;
+	NTYP y04=y02*y02;
+	NTYP z02=A.z0*A.z0;
+	NTYP x12=A.x1*A.x1;
+	NTYP x13=x12*A.x1;
+	NTYP x14=x12*x12;
+	NTYP y12=A.y1*A.y1;
+	NTYP y13=y12*A.y1;
+	NTYP y14=y12*y12;
+	NTYP z12=A.z1*A.z1;
+	NTYP mi1,ma1;
+	minimaxF107AB(mi1,ma1,x02,x12);
+	NTYP mi2,ma2;
+	minimaxF107AB(mi2,ma2,y02,y12);
+	NTYP mi3,ma3;
+	minimaxF107AB(mi3,ma3,z02,z12);
+	NTYP mi4,ma4;
+	minimaxF107AB(mi4,ma4,x04,x14);
+	NTYP mi5,ma5;
+	minimaxF107AB(mi5,ma5,y04,y14);
+
+	fA.x0=tricC0x+minimumD(varF*A.x0,varF*A.x1)+minimumD(varH*mi3,varH*ma3)+x02*x03-(2*(5*maximumD((x03)*mi2,(x03)*ma2,(x13)*mi2,(x13)*ma2)))+5*minimumD(A.x0*mi5,A.x0*ma5,A.x1*mi5,A.x1*ma5);
+	fA.x1=tricC1x+maximumD(varF*A.x0,varF*A.x1)+maximumD(varH*mi3,varH*ma3)+x12*x13-(2*(5*minimumD((x03)*mi2,(x03)*ma2,(x13)*mi2,(x13)*ma2)))+5*maximumD(A.x0*mi5,A.x0*ma5,A.x1*mi5,A.x1*ma5);
+
+	fA.y0=tricC0y+minimumD(varE*A.y0,varE*A.y1)+5*minimumD(mi4*A.y0,mi4*A.y1,ma4*A.y0,ma4*A.y1)-(2*(5*maximumD(mi1*(y03),mi1*(y13),ma1*(y03),ma1*(y13))))+y02*y03;
+	fA.y1=tricC1y+maximumD(varE*A.y0,varE*A.y1)+5*maximumD(mi4*A.y0,mi4*A.y1,ma4*A.y0,ma4*A.y1)-(2*(5*minimumD(mi1*(y03),mi1*(y13),ma1*(y03),ma1*(y13))))+y12*y13;
+
+	fA.z0=tricC0z+mi3-ma2-ma1;
+	fA.z1=tricC1z+ma3-mi2-mi1;
+	return;
+	#endif
+	
+	#ifdef _QUADMATH
+	NTYP x02=A.x0*A.x0;
+	NTYP x03=x02*A.x0;
+	NTYP x04=x02*x02;
+	NTYP y02=A.y0*A.y0;
+	NTYP y03=y02*A.y0;
+	NTYP y04=y02*y02;
+	NTYP z02=A.z0*A.z0;
+	NTYP x12=A.x1*A.x1;
+	NTYP x13=x12*A.x1;
+	NTYP x14=x12*x12;
+	NTYP y12=A.y1*A.y1;
+	NTYP y13=y12*A.y1;
+	NTYP y14=y12*y12;
+	NTYP z12=A.z1*A.z1;
+	NTYP mi1,ma1;
+	minimaxQDAB(mi1,ma1,x02,x12);
+	NTYP mi2,ma2;
+	minimaxQDAB(mi2,ma2,y02,y12);
+	NTYP mi3,ma3;
+	minimaxQDAB(mi3,ma3,z02,z12);
+	NTYP mi4,ma4;
+	minimaxQDAB(mi4,ma4,x04,x14);
+	NTYP mi5,ma5;
+	minimaxQDAB(mi5,ma5,y04,y14);
+
+	fA.x0=tricC0x+minimumD(varF*A.x0,varF*A.x1)+minimumD(varH*mi3,varH*ma3)+x02*x03-(2*(5*maximumD((x03)*mi2,(x03)*ma2,(x13)*mi2,(x13)*ma2)))+5*minimumD(A.x0*mi5,A.x0*ma5,A.x1*mi5,A.x1*ma5);
+	fA.x1=tricC1x+maximumD(varF*A.x0,varF*A.x1)+maximumD(varH*mi3,varH*ma3)+x12*x13-(2*(5*minimumD((x03)*mi2,(x03)*ma2,(x13)*mi2,(x13)*ma2)))+5*maximumD(A.x0*mi5,A.x0*ma5,A.x1*mi5,A.x1*ma5);
+
+	fA.y0=tricC0y+minimumD(varE*A.y0,varE*A.y1)+5*minimumD(mi4*A.y0,mi4*A.y1,ma4*A.y0,ma4*A.y1)-(2*(5*maximumD(mi1*(y03),mi1*(y13),ma1*(y03),ma1*(y13))))+y02*y03;
+	fA.y1=tricC1y+maximumD(varE*A.y0,varE*A.y1)+5*maximumD(mi4*A.y0,mi4*A.y1,ma4*A.y0,ma4*A.y1)-(2*(5*minimumD(mi1*(y03),mi1*(y13),ma1*(y03),ma1*(y13))))+y12*y13;
+
+	fA.z0=tricC0z+mi3-ma2-ma1;
+	fA.z1=tricC1z+ma3-mi2-mi1;
+	return;
+	#endif
+
+	#ifndef _F107
+	#ifndef _QUADMATH
 	fA.x0=tricC0x+minimumD(varF*A.x0,varF*A.x1)+minimumD(varH*minimumD(A.z0*A.z0,A.z1*A.z1),varH*maximumD(A.z0*A.z0,A.z1*A.z1))+A.x0*A.x0*A.x0*A.x0*A.x0-(2*(5*maximumD((A.x0*A.x0*A.x0)*minimumD(A.y0*A.y0,A.y1*A.y1),(A.x0*A.x0*A.x0)*maximumD(A.y0*A.y0,A.y1*A.y1),(A.x1*A.x1*A.x1)*minimumD(A.y0*A.y0,A.y1*A.y1),(A.x1*A.x1*A.x1)*maximumD(A.y0*A.y0,A.y1*A.y1))))+5*minimumD(A.x0*minimumD(A.y0*A.y0*A.y0*A.y0,A.y1*A.y1*A.y1*A.y1),A.x0*maximumD(A.y0*A.y0*A.y0*A.y0,A.y1*A.y1*A.y1*A.y1),A.x1*minimumD(A.y0*A.y0*A.y0*A.y0,A.y1*A.y1*A.y1*A.y1),A.x1*maximumD(A.y0*A.y0*A.y0*A.y0,A.y1*A.y1*A.y1*A.y1));
 	fA.x1=tricC1x+maximumD(varF*A.x0,varF*A.x1)+maximumD(varH*minimumD(A.z0*A.z0,A.z1*A.z1),varH*maximumD(A.z0*A.z0,A.z1*A.z1))+A.x1*A.x1*A.x1*A.x1*A.x1-(2*(5*minimumD((A.x0*A.x0*A.x0)*minimumD(A.y0*A.y0,A.y1*A.y1),(A.x0*A.x0*A.x0)*maximumD(A.y0*A.y0,A.y1*A.y1),(A.x1*A.x1*A.x1)*minimumD(A.y0*A.y0,A.y1*A.y1),(A.x1*A.x1*A.x1)*maximumD(A.y0*A.y0,A.y1*A.y1))))+5*maximumD(A.x0*minimumD(A.y0*A.y0*A.y0*A.y0,A.y1*A.y1*A.y1*A.y1),A.x0*maximumD(A.y0*A.y0*A.y0*A.y0,A.y1*A.y1*A.y1*A.y1),A.x1*minimumD(A.y0*A.y0*A.y0*A.y0,A.y1*A.y1*A.y1*A.y1),A.x1*maximumD(A.y0*A.y0*A.y0*A.y0,A.y1*A.y1*A.y1*A.y1));
 	fA.y0=tricC0y+minimumD(varE*A.y0,varE*A.y1)+5*minimumD(minimumD(A.x0*A.x0*A.x0*A.x0,A.x1*A.x1*A.x1*A.x1)*A.y0,minimumD(A.x0*A.x0*A.x0*A.x0,A.x1*A.x1*A.x1*A.x1)*A.y1,maximumD(A.x0*A.x0*A.x0*A.x0,A.x1*A.x1*A.x1*A.x1)*A.y0,maximumD(A.x0*A.x0*A.x0*A.x0,A.x1*A.x1*A.x1*A.x1)*A.y1)-(2*(5*maximumD(minimumD(A.x0*A.x0,A.x1*A.x1)*(A.y0*A.y0*A.y0),minimumD(A.x0*A.x0,A.x1*A.x1)*(A.y1*A.y1*A.y1),maximumD(A.x0*A.x0,A.x1*A.x1)*(A.y0*A.y0*A.y0),maximumD(A.x0*A.x0,A.x1*A.x1)*(A.y1*A.y1*A.y1))))+A.y0*A.y0*A.y0*A.y0*A.y0;
 	fA.y1=tricC1y+maximumD(varE*A.y0,varE*A.y1)+5*maximumD(minimumD(A.x0*A.x0*A.x0*A.x0,A.x1*A.x1*A.x1*A.x1)*A.y0,minimumD(A.x0*A.x0*A.x0*A.x0,A.x1*A.x1*A.x1*A.x1)*A.y1,maximumD(A.x0*A.x0*A.x0*A.x0,A.x1*A.x1*A.x1*A.x1)*A.y0,maximumD(A.x0*A.x0*A.x0*A.x0,A.x1*A.x1*A.x1*A.x1)*A.y1)-(2*(5*minimumD(minimumD(A.x0*A.x0,A.x1*A.x1)*(A.y0*A.y0*A.y0),minimumD(A.x0*A.x0,A.x1*A.x1)*(A.y1*A.y1*A.y1),maximumD(A.x0*A.x0,A.x1*A.x1)*(A.y0*A.y0*A.y0),maximumD(A.x0*A.x0,A.x1*A.x1)*(A.y1*A.y1*A.y1))))+A.y1*A.y1*A.y1*A.y1*A.y1;
 	fA.z0=tricC0z+minimumD(A.z0*A.z0,A.z1*A.z1)-maximumD(A.y0*A.y0,A.y1*A.y1)-maximumD(A.x0*A.x0,A.x1*A.x1);
 	fA.z1=tricC1z+maximumD(A.z0*A.z0,A.z1*A.z1)-minimumD(A.y0*A.y0,A.y1*A.y1)-minimumD(A.x0*A.x0,A.x1*A.x1);
+	#endif
+	#endif
 }
 
 void getBoundingBoxfA_bristor(SpaceCube& A,SpaceCube& fA) {
+	ctrbbxfa++;
+	
 	fA.x0=minimumD(A.x0*A.x0,A.x0*A.x1,A.x1*A.x0,A.x1*A.x1)-maximumD(A.y0*A.y0,A.y0*A.y1,A.y1*A.y0,A.y1*A.y1)-maximumD(A.z0*A.z0,A.z0*A.z1,A.z1*A.z0,A.z1*A.z1)+tricC0x;
 	fA.x1=maximumD(A.x0*A.x0,A.x0*A.x1,A.x1*A.x0,A.x1*A.x1)-minimumD(A.y0*A.y0,A.y0*A.y1,A.y1*A.y0,A.y1*A.y1)-minimumD(A.z0*A.z0,A.z0*A.z1,A.z1*A.z0,A.z1*A.z1)+tricC1x;
 	fA.y0=2*minimumD(A.y0*A.x0,A.y0*A.x1,A.y1*A.x0,A.y1*A.x1)-maximumD(A.y0*A.z0,A.y0*A.z1,A.y1*A.z0,A.y1*A.z1)+tricC0y;
@@ -355,6 +543,8 @@ void getBoundingBoxfA_bristor(SpaceCube& A,SpaceCube& fA) {
 }
 
 inline void getBoundingBoxfA_makinexp4(SpaceCube& A,SpaceCube& fA) {
+	ctrbbxfa++;
+
 	fA.x0=tricC0x+minimumD(A.x0*A.x0*A.x0*A.x0,A.x1*A.x1*A.x1*A.x1)-maximumD(A.y0*A.y0*A.y0*A.y0,A.y1*A.y1*A.y1*A.y1)-maximumD(tricBx*minimumD(A.z0*A.z0,A.z1*A.z1),tricBx*maximumD(A.z0*A.z0,A.z1*A.z1));
 	fA.x1=tricC1x+maximumD(A.x0*A.x0*A.x0*A.x0,A.x1*A.x1*A.x1*A.x1)-minimumD(A.y0*A.y0*A.y0*A.y0,A.y1*A.y1*A.y1*A.y1)-minimumD(tricBx*minimumD(A.z0*A.z0,A.z1*A.z1),tricBx*maximumD(A.z0*A.z0,A.z1*A.z1));
 	fA.y0=tricC0y+minimumD(tricAy*A.x0,tricAy*A.x1)+2*minimumD(A.x0*A.y0,A.x0*A.y1,A.x1*A.y0,A.x1*A.y1);
@@ -364,15 +554,81 @@ inline void getBoundingBoxfA_makinexp4(SpaceCube& A,SpaceCube& fA) {
 }
 
 inline void getBoundingBoxfA_makinexp4b(SpaceCube& A,SpaceCube& fA) {
+	ctrbbxfa++;
+	
+	#ifdef _F107
+	NTYP x02=A.x0*A.x0;
+	NTYP y02=A.y0*A.y0;
+	NTYP z02=A.z0*A.z0;
+	NTYP z04=z02*z02;
+	NTYP x12=A.x1*A.x1;
+	NTYP y12=A.y1*A.y1;
+	NTYP z12=A.z1*A.z1;
+	NTYP z14=z12*z12;
+	NTYP mi1,ma1;
+	minimaxF107AB(mi1,ma1,x02,x12);
+	NTYP mi2,ma2;
+	minimaxF107AB(mi2,ma2,y02,y12);
+	NTYP mi3,ma3;
+	minimaxF107AB(mi3,ma3,z02,z12);
+	NTYP mi4,ma4;
+	minimaxF107ABCD(mi4,ma4,mi1*mi2,mi1*ma2,ma1*mi2,ma1*ma2);
+
+	fA.x0=tricC0x+x02*x02*A.x0-(y12*y12*A.y1)-maximumD(tricBx*minimumD(z04,z14),tricBx*maximumD(z04,z14));
+	fA.x1=tricC1x+x12*x12*A.x1-(y02*y02*A.y0)-minimumD(tricBx*minimumD(z04,z14),tricBx*maximumD(z04,z14));
+
+	fA.y0=tricC0y+minimumD(tricAy*A.x0,tricAy*A.x1)+2*mi4;
+	fA.y1=tricC1y+maximumD(tricAy*A.x0,tricAy*A.x1)+2*ma4;
+
+	fA.z0=tricC0z+mi3-ma2-ma1;
+	fA.z1=tricC1z+ma3-mi2-mi1;
+	return;
+	#endif
+	
+	#ifdef _QUADMATH
+	NTYP x02=A.x0*A.x0;
+	NTYP y02=A.y0*A.y0;
+	NTYP z02=A.z0*A.z0;
+	NTYP z04=z02*z02;
+	NTYP x12=A.x1*A.x1;
+	NTYP y12=A.y1*A.y1;
+	NTYP z12=A.z1*A.z1;
+	NTYP z14=z12*z12;
+	NTYP mi1,ma1;
+	minimaxQDAB(mi1,ma1,x02,x12);
+	NTYP mi2,ma2;
+	minimaxQDAB(mi2,ma2,y02,y12);
+	NTYP mi3,ma3;
+	minimaxQDAB(mi3,ma3,z02,z12);
+	NTYP mi4,ma4;
+	minimaxQDABCD(mi4,ma4,mi1*mi2,mi1*ma2,ma1*mi2,ma1*ma2);
+
+	fA.x0=tricC0x+x02*x02*A.x0-(y12*y12*A.y1)-maximumD(tricBx*minimumD(z04,z14),tricBx*maximumD(z04,z14));
+	fA.x1=tricC1x+x12*x12*A.x1-(y02*y02*A.y0)-minimumD(tricBx*minimumD(z04,z14),tricBx*maximumD(z04,z14));
+
+	fA.y0=tricC0y+minimumD(tricAy*A.x0,tricAy*A.x1)+2*mi4;
+	fA.y1=tricC1y+maximumD(tricAy*A.x0,tricAy*A.x1)+2*ma4;
+
+	fA.z0=tricC0z+mi3-ma2-ma1;
+	fA.z1=tricC1z+ma3-mi2-mi1;
+	return;
+	#endif
+
+	#ifndef _F107
+	#ifndef _QUADMATH
 	fA.x0=tricC0x+A.x0*A.x0*A.x0*A.x0*A.x0-(A.y1*A.y1*A.y1*A.y1*A.y1)-maximumD(tricBx*minimumD(A.z0*A.z0*A.z0*A.z0,A.z1*A.z1*A.z1*A.z1),tricBx*maximumD(A.z0*A.z0*A.z0*A.z0,A.z1*A.z1*A.z1*A.z1));
 	fA.x1=tricC1x+A.x1*A.x1*A.x1*A.x1*A.x1-(A.y0*A.y0*A.y0*A.y0*A.y0)-minimumD(tricBx*minimumD(A.z0*A.z0*A.z0*A.z0,A.z1*A.z1*A.z1*A.z1),tricBx*maximumD(A.z0*A.z0*A.z0*A.z0,A.z1*A.z1*A.z1*A.z1));
 	fA.y0=tricC0y+minimumD(tricAy*A.x0,tricAy*A.x1)+2*minimumD(minimumD(A.x0*A.x0,A.x1*A.x1)*minimumD(A.y0*A.y0,A.y1*A.y1),minimumD(A.x0*A.x0,A.x1*A.x1)*maximumD(A.y0*A.y0,A.y1*A.y1),maximumD(A.x0*A.x0,A.x1*A.x1)*minimumD(A.y0*A.y0,A.y1*A.y1),maximumD(A.x0*A.x0,A.x1*A.x1)*maximumD(A.y0*A.y0,A.y1*A.y1));
 	fA.y1=tricC1y+maximumD(tricAy*A.x0,tricAy*A.x1)+2*maximumD(minimumD(A.x0*A.x0,A.x1*A.x1)*minimumD(A.y0*A.y0,A.y1*A.y1),minimumD(A.x0*A.x0,A.x1*A.x1)*maximumD(A.y0*A.y0,A.y1*A.y1),maximumD(A.x0*A.x0,A.x1*A.x1)*minimumD(A.y0*A.y0,A.y1*A.y1),maximumD(A.x0*A.x0,A.x1*A.x1)*maximumD(A.y0*A.y0,A.y1*A.y1));
 	fA.z0=tricC0z+minimumD(A.z0*A.z0,A.z1*A.z1)-maximumD(A.y0*A.y0,A.y1*A.y1)-maximumD(A.x0*A.x0,A.x1*A.x1);
 	fA.z1=tricC1z+maximumD(A.z0*A.z0,A.z1*A.z1)-minimumD(A.y0*A.y0,A.y1*A.y1)-minimumD(A.x0*A.x0,A.x1*A.x1);
+	#endif
+	#endif
 }
 
 inline void getBoundingBoxfA_makinexp5(SpaceCube& A,SpaceCube& fA) {
+	ctrbbxfa++;
+	
 	fA.x0=tricC0x+minimumD(varM*minimumD(A.x0*A.x0,A.x1*A.x1),varM*maximumD(A.x0*A.x0,A.x1*A.x1))+A.x0*A.x0*A.x0-(2*maximumD(varN*minimumD(A.x0*A.y0,A.x0*A.y1,A.x1*A.y0,A.x1*A.y1),varN*maximumD(A.x0*A.y0,A.x0*A.y1,A.x1*A.y0,A.x1*A.y1)))-maximumD(varM*minimumD(A.y0*A.y0,A.y1*A.y1),varM*maximumD(A.y0*A.y0,A.y1*A.y1))-(3*maximumD(A.x0*minimumD(A.y0*A.y0,A.y1*A.y1),A.x0*maximumD(A.y0*A.y0,A.y1*A.y1),A.x1*minimumD(A.y0*A.y0,A.y1*A.y1),A.x1*maximumD(A.y0*A.y0,A.y1*A.y1)))+minimumD(varH*minimumD(A.z0*A.z0,A.z1*A.z1),varH*maximumD(A.z0*A.z0,A.z1*A.z1));
 	fA.x1=tricC1x+maximumD(varM*minimumD(A.x0*A.x0,A.x1*A.x1),varM*maximumD(A.x0*A.x0,A.x1*A.x1))+A.x1*A.x1*A.x1-(2*minimumD(varN*minimumD(A.x0*A.y0,A.x0*A.y1,A.x1*A.y0,A.x1*A.y1),varN*maximumD(A.x0*A.y0,A.x0*A.y1,A.x1*A.y0,A.x1*A.y1)))-minimumD(varM*minimumD(A.y0*A.y0,A.y1*A.y1),varM*maximumD(A.y0*A.y0,A.y1*A.y1))-(3*minimumD(A.x0*minimumD(A.y0*A.y0,A.y1*A.y1),A.x0*maximumD(A.y0*A.y0,A.y1*A.y1),A.x1*minimumD(A.y0*A.y0,A.y1*A.y1),A.x1*maximumD(A.y0*A.y0,A.y1*A.y1)))+maximumD(varH*minimumD(A.z0*A.z0,A.z1*A.z1),varH*maximumD(A.z0*A.z0,A.z1*A.z1));
 	fA.y0=tricC0y+minimumD(varN*minimumD(A.x0*A.x0,A.x1*A.x1),varN*maximumD(A.x0*A.x0,A.x1*A.x1))+2*minimumD(varM*minimumD(A.x0*A.y0,A.x0*A.y1,A.x1*A.y0,A.x1*A.y1),varM*maximumD(A.x0*A.y0,A.x0*A.y1,A.x1*A.y0,A.x1*A.y1))+3*minimumD(minimumD(A.x0*A.x0,A.x1*A.x1)*A.y0,minimumD(A.x0*A.x0,A.x1*A.x1)*A.y1,maximumD(A.x0*A.x0,A.x1*A.x1)*A.y0,maximumD(A.x0*A.x0,A.x1*A.x1)*A.y1)-maximumD(varN*minimumD(A.y0*A.y0,A.y1*A.y1),varN*maximumD(A.y0*A.y0,A.y1*A.y1))-(A.y1*A.y1*A.y1);
@@ -382,6 +638,8 @@ inline void getBoundingBoxfA_makinexp5(SpaceCube& A,SpaceCube& fA) {
 }
 
 inline void getBoundingBoxfA_makin(SpaceCube& A,SpaceCube& fA) {
+	ctrbbxfa++;
+	
 	fA.x0=minimumD(A.x0*A.x0,A.x0*A.x1,A.x1*A.x0,A.x1*A.x1)-maximumD(A.y0*A.y0,A.y0*A.y1,A.y1*A.y0,A.y1*A.y1)-maximumD(A.z0*A.z0,A.z0*A.z1,A.z1*A.z0,A.z1*A.z1)+tricC0x;
 	fA.x1=maximumD(A.x0*A.x0,A.x0*A.x1,A.x1*A.x0,A.x1*A.x1)-minimumD(A.y0*A.y0,A.y0*A.y1,A.y1*A.y0,A.y1*A.y1)-minimumD(A.z0*A.z0,A.z0*A.z1,A.z1*A.z0,A.z1*A.z1)+tricC1x;
 	fA.y0=2*minimumD(A.x0*A.y0,A.x0*A.y1,A.x1*A.y0,A.x1*A.y1)+tricC0y;
@@ -390,7 +648,142 @@ inline void getBoundingBoxfA_makin(SpaceCube& A,SpaceCube& fA) {
 	fA.z1=tricC1z+2*maximumD(A.x0*A.z0,A.x0*A.z1,A.x1*A.z0,A.x1*A.z1)-(2*minimumD(A.y0*A.z0,A.y0*A.z1,A.y1*A.z0,A.y1*A.z1));
 }
 
+void freeRevCGMem(void) {
+	if (parentmgr) {
+		delete parentmgr;
+		parentmgr=NULL;
+	}
+	
+	if (revcgmanager) {
+		delete revcgmanager;
+		revcgmanager=NULL;
+	}
+	
+	if (data->revcgZ_YX) {
+		delete[] data->revcgZ_YX;
+		data->revcgZ_YX=NULL;
+	}
+}
+
+inline void getBoundingBoxfA_sh2(SpaceCube& A,SpaceCube& fA) {
+	ctrbbxfa++;
+
+	fA.x0=tricC0x+2*minimumD(A.x0*A.y0,A.x0*A.y1,A.x1*A.y0,A.x1*A.y1);
+	fA.x1=tricC1x+2*maximumD(A.x0*A.y0,A.x0*A.y1,A.x1*A.y0,A.x1*A.y1);
+
+	fA.y0=tricC0y+2*minimumD(minimumD(A.z0*A.z0,A.z1*A.z1)*A.x0,minimumD(A.z0*A.z0,A.z1*A.z1)*A.x1,maximumD(A.z0*A.z0,A.z1*A.z1)*A.x0,maximumD(A.z0*A.z0,A.z1*A.z1)*A.x1);
+	fA.y1=tricC1y+2*maximumD(minimumD(A.z0*A.z0,A.z1*A.z1)*A.x0,minimumD(A.z0*A.z0,A.z1*A.z1)*A.x1,maximumD(A.z0*A.z0,A.z1*A.z1)*A.x0,maximumD(A.z0*A.z0,A.z1*A.z1)*A.x1);
+
+	fA.z0=tricC0z+minimumD(A.x0*A.x0,A.x1*A.x1)-(A.y1*A.y1*A.y1);
+	fA.z1=tricC1z+maximumD(A.x0*A.x0,A.x1*A.x1)-(A.y0*A.y0*A.y0);
+
+}
+
+inline void getBoundingBoxfA_sh1(SpaceCube& A,SpaceCube& fA) {
+	ctrbbxfa++;
+
+	fA.x0=tricC0x+2*minimumD(A.x0*A.y0,A.x0*A.y1,A.x1*A.y0,A.x1*A.y1);
+	fA.x1=tricC1x+2*maximumD(A.x0*A.y0,A.x0*A.y1,A.x1*A.y0,A.x1*A.y1);
+
+	fA.y0=tricC0y-(2*maximumD(A.x0*A.z0,A.x0*A.z1,A.x1*A.z0,A.x1*A.z1));
+	fA.y1=tricC1y-(2*minimumD(A.x0*A.z0,A.x0*A.z1,A.x1*A.z0,A.x1*A.z1));
+
+	fA.z0=tricC0z+minimumD(A.x0*A.x0,A.x1*A.x1)-maximumD(A.y0*A.y0,A.y1*A.y1)-maximumD(A.z0*A.z0,A.z1*A.z1);
+	fA.z1=tricC1z+maximumD(A.x0*A.x0,A.x1*A.x1)-minimumD(A.y0*A.y0,A.y1*A.y1)-minimumD(A.z0*A.z0,A.z1*A.z1);
+}
+
+inline void getBoundingBoxfA_sh43(SpaceCube& A,SpaceCube& fA) {
+	ctrbbxfa++;
+
+	fA.x0=tricC0x+minimumD(A.x0*A.x0*A.x0*A.x0,A.x1*A.x1*A.x1*A.x1)-maximumD(A.y0*A.y0*A.y0*A.y0,A.y1*A.y1*A.y1*A.y1)-maximumD(A.z0*A.z0,A.z1*A.z1);
+	fA.x1=tricC1x+maximumD(A.x0*A.x0*A.x0*A.x0,A.x1*A.x1*A.x1*A.x1)-minimumD(A.y0*A.y0*A.y0*A.y0,A.y1*A.y1*A.y1*A.y1)-minimumD(A.z0*A.z0,A.z1*A.z1);
+
+	fA.y0=tricC0y+2*minimumD(A.x0*A.z0,A.x0*A.z1,A.x1*A.z0,A.x1*A.z1)-maximumD(A.y0*A.z0,A.y0*A.z1,A.y1*A.z0,A.y1*A.z1);
+	fA.y1=tricC1y+2*maximumD(A.x0*A.z0,A.x0*A.z1,A.x1*A.z0,A.x1*A.z1)-minimumD(A.y0*A.z0,A.y0*A.z1,A.y1*A.z0,A.y1*A.z1);
+
+	fA.z0=tricC0z+A.y0+3*minimumD(minimumD(A.x0*A.x0,A.x1*A.x1)*A.y0,minimumD(A.x0*A.x0,A.x1*A.x1)*A.y1,maximumD(A.x0*A.x0,A.x1*A.x1)*A.y0,maximumD(A.x0*A.x0,A.x1*A.x1)*A.y1)-(A.y1*A.y1*A.y1);
+	fA.z1=tricC1z+A.y1+3*maximumD(minimumD(A.x0*A.x0,A.x1*A.x1)*A.y0,minimumD(A.x0*A.x0,A.x1*A.x1)*A.y1,maximumD(A.x0*A.x0,A.x1*A.x1)*A.y0,maximumD(A.x0*A.x0,A.x1*A.x1)*A.y1)-(A.y0*A.y0*A.y0);
+
+}
+
+inline void getBoundingBoxfA_sh17(SpaceCube& A,SpaceCube& fA) {
+	ctrbbxfa++;
+	
+	#ifdef _F107
+	NTYP x02=A.x0*A.x0;
+	NTYP y02=A.y0*A.y0;
+	NTYP z02=A.z0*A.z0;
+	NTYP x12=A.x1*A.x1;
+	NTYP y12=A.y1*A.y1;
+	NTYP z12=A.z1*A.z1;
+	NTYP mi1,ma1;
+	minimaxF107ABCD(mi1,ma1,A.y0*A.z0,A.y0*A.z1,A.y1*A.z0,A.y1*A.z1);
+	NTYP mi2,ma2;
+	minimaxF107AB(mi2,ma2,x02,x12);
+	NTYP mi3,ma3;
+	minimaxF107AB(mi3,ma3,y02,y12);
+	NTYP mi4,ma4;
+	minimaxF107AB(mi4,ma4,z02,z12);
+	NTYP mi5,ma5;
+	minimaxF107ABCD(mi5,ma5,mi2*mi3,mi2*ma3,ma2*mi3,ma2*ma3);
+
+	fA.x0=tricC0x+4*minimumD(A.x0*mi1,A.x0*ma1,A.x1*mi1,A.x1*ma1)+2*minimumD(A.z0*tricC0y,A.z0*tricC1y,A.z1*tricC0y,A.z1*tricC1y);
+	fA.x1=tricC1x+4*maximumD(A.x0*mi1,A.x0*ma1,A.x1*mi1,A.x1*ma1)+2*maximumD(A.z0*tricC0y,A.z0*tricC1y,A.z1*tricC0y,A.z1*tricC1y);
+
+	fA.y0=tricC0y+4*mi5+4*minimumD(A.x0*minimumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y),A.x0*maximumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y),A.x1*minimumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y),A.x1*maximumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y))+minimumD(tricC0y*tricC0y,tricC1y*tricC1y)-ma4;
+	fA.y1=tricC1y+4*ma5+4*maximumD(A.x0*minimumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y),A.x0*maximumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y),A.x1*minimumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y),A.x1*maximumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y))+maximumD(tricC0y*tricC0y,tricC1y*tricC1y)-mi4;
+
+	fA.z0=tricC0z+mi2-ma3-(2*maximumD(A.x0*A.y0,A.x0*A.y1,A.x1*A.y0,A.x1*A.y1))+A.z0;
+	fA.z1=tricC1z+ma2-mi3-(2*minimumD(A.x0*A.y0,A.x0*A.y1,A.x1*A.y0,A.x1*A.y1))+A.z1;
+	return;
+	#endif
+
+	#ifdef _QUADMATH
+	NTYP x02=A.x0*A.x0;
+	NTYP y02=A.y0*A.y0;
+	NTYP z02=A.z0*A.z0;
+	NTYP x12=A.x1*A.x1;
+	NTYP y12=A.y1*A.y1;
+	NTYP z12=A.z1*A.z1;
+	NTYP mi1,ma1;
+	minimaxQDABCD(mi1,ma1,A.y0*A.z0,A.y0*A.z1,A.y1*A.z0,A.y1*A.z1);
+	NTYP mi2,ma2;
+	minimaxQDAB(mi2,ma2,x02,x12);
+	NTYP mi3,ma3;
+	minimaxQDAB(mi3,ma3,y02,y12);
+	NTYP mi4,ma4;
+	minimaxQDAB(mi4,ma4,z02,z12);
+	NTYP mi5,ma5;
+	minimaxQDABCD(mi5,ma5,mi2*mi3,mi2*ma3,ma2*mi3,ma2*ma3);
+
+	fA.x0=tricC0x+4*minimumD(A.x0*mi1,A.x0*ma1,A.x1*mi1,A.x1*ma1)+2*minimumD(A.z0*tricC0y,A.z0*tricC1y,A.z1*tricC0y,A.z1*tricC1y);
+	fA.x1=tricC1x+4*maximumD(A.x0*mi1,A.x0*ma1,A.x1*mi1,A.x1*ma1)+2*maximumD(A.z0*tricC0y,A.z0*tricC1y,A.z1*tricC0y,A.z1*tricC1y);
+
+	fA.y0=tricC0y+4*mi5+4*minimumD(A.x0*minimumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y),A.x0*maximumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y),A.x1*minimumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y),A.x1*maximumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y))+minimumD(tricC0y*tricC0y,tricC1y*tricC1y)-ma4;
+	fA.y1=tricC1y+4*ma5+4*maximumD(A.x0*minimumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y),A.x0*maximumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y),A.x1*minimumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y),A.x1*maximumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y))+maximumD(tricC0y*tricC0y,tricC1y*tricC1y)-mi4;
+
+	fA.z0=tricC0z+mi2-ma3-(2*maximumD(A.x0*A.y0,A.x0*A.y1,A.x1*A.y0,A.x1*A.y1))+A.z0;
+	fA.z1=tricC1z+ma2-mi3-(2*minimumD(A.x0*A.y0,A.x0*A.y1,A.x1*A.y0,A.x1*A.y1))+A.z1;
+	return;
+	#endif
+
+	#ifndef _F107
+	#ifndef _QUADMATH
+	fA.x0=tricC0x+4*minimumD(A.x0*minimumD(A.y0*A.z0,A.y0*A.z1,A.y1*A.z0,A.y1*A.z1),A.x0*maximumD(A.y0*A.z0,A.y0*A.z1,A.y1*A.z0,A.y1*A.z1),A.x1*minimumD(A.y0*A.z0,A.y0*A.z1,A.y1*A.z0,A.y1*A.z1),A.x1*maximumD(A.y0*A.z0,A.y0*A.z1,A.y1*A.z0,A.y1*A.z1))+2*minimumD(A.z0*tricC0y,A.z0*tricC1y,A.z1*tricC0y,A.z1*tricC1y);
+	fA.x1=tricC1x+4*maximumD(A.x0*minimumD(A.y0*A.z0,A.y0*A.z1,A.y1*A.z0,A.y1*A.z1),A.x0*maximumD(A.y0*A.z0,A.y0*A.z1,A.y1*A.z0,A.y1*A.z1),A.x1*minimumD(A.y0*A.z0,A.y0*A.z1,A.y1*A.z0,A.y1*A.z1),A.x1*maximumD(A.y0*A.z0,A.y0*A.z1,A.y1*A.z0,A.y1*A.z1))+2*maximumD(A.z0*tricC0y,A.z0*tricC1y,A.z1*tricC0y,A.z1*tricC1y);
+
+	fA.y0=tricC0y+4*minimumD(minimumD(A.x0*A.x0,A.x1*A.x1)*minimumD(A.y0*A.y0,A.y1*A.y1),minimumD(A.x0*A.x0,A.x1*A.x1)*maximumD(A.y0*A.y0,A.y1*A.y1),maximumD(A.x0*A.x0,A.x1*A.x1)*minimumD(A.y0*A.y0,A.y1*A.y1),maximumD(A.x0*A.x0,A.x1*A.x1)*maximumD(A.y0*A.y0,A.y1*A.y1))+4*minimumD(A.x0*minimumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y),A.x0*maximumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y),A.x1*minimumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y),A.x1*maximumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y))+minimumD(tricC0y*tricC0y,tricC1y*tricC1y)-maximumD(A.z0*A.z0,A.z1*A.z1);
+	fA.y1=tricC1y+4*maximumD(minimumD(A.x0*A.x0,A.x1*A.x1)*minimumD(A.y0*A.y0,A.y1*A.y1),minimumD(A.x0*A.x0,A.x1*A.x1)*maximumD(A.y0*A.y0,A.y1*A.y1),maximumD(A.x0*A.x0,A.x1*A.x1)*minimumD(A.y0*A.y0,A.y1*A.y1),maximumD(A.x0*A.x0,A.x1*A.x1)*maximumD(A.y0*A.y0,A.y1*A.y1))+4*maximumD(A.x0*minimumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y),A.x0*maximumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y),A.x1*minimumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y),A.x1*maximumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y))+maximumD(tricC0y*tricC0y,tricC1y*tricC1y)-minimumD(A.z0*A.z0,A.z1*A.z1);
+
+	fA.z0=tricC0z+minimumD(A.x0*A.x0,A.x1*A.x1)-maximumD(A.y0*A.y0,A.y1*A.y1)-(2*maximumD(A.x0*A.y0,A.x0*A.y1,A.x1*A.y0,A.x1*A.y1))+A.z0;
+	fA.z1=tricC1z+maximumD(A.x0*A.x0,A.x1*A.x1)-minimumD(A.y0*A.y0,A.y1*A.y1)-(2*minimumD(A.x0*A.y0,A.x0*A.y1,A.x1*A.y0,A.x1*A.y1))+A.z1;
+	#endif
+	#endif
+}
+
 inline void getBoundingBoxfA_smith(SpaceCube& A,SpaceCube& fA) {
+	ctrbbxfa++;
+
 	fA.x0=minimumD(A.x0*A.x0,A.x1*A.x1)-maximumD(A.y0*A.y0,A.y1*A.y1)+tricC0x;
 	fA.x1=maximumD(A.x0*A.x0,A.x1*A.x1)-minimumD(A.y0*A.y0,A.y1*A.y1)+tricC1x;
 	fA.y0=4*minimumD(minimumD(A.x0*A.x0,A.x1*A.x1)*minimumD(A.y0*A.y0,A.y1*A.y1),minimumD(A.x0*A.x0,A.x1*A.x1)*maximumD(A.y0*A.y0,A.y1*A.y1),maximumD(A.x0*A.x0,A.x1*A.x1)*minimumD(A.y0*A.y0,A.y1*A.y1),maximumD(A.x0*A.x0,A.x1*A.x1)*maximumD(A.y0*A.y0,A.y1*A.y1))+4*minimumD(A.x0*minimumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y),A.x0*maximumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y),A.x1*minimumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y),A.x1*maximumD(A.y0*tricC0y,A.y0*tricC1y,A.y1*tricC0y,A.y1*tricC1y))+minimumD(tricC0y*tricC0y,tricC1y*tricC1y)-maximumD(A.z0*A.z0,A.z1*A.z1)+tricC0y;
@@ -400,6 +793,8 @@ inline void getBoundingBoxfA_smith(SpaceCube& A,SpaceCube& fA) {
 }
 
 inline void getBoundingBoxfA_tricz4b(SpaceCube& A,SpaceCube& fA) {
+	ctrbbxfa++;
+
 	fA.x0=tricC0x+minimumD(tricAx*A.x0,tricAx*A.x1)+minimumD(A.x0*A.x0*A.x0*A.x0,A.x1*A.x1*A.x1*A.x1)-(6*maximumD(minimumD(A.x0*A.x0,A.x1*A.x1)*minimumD(A.y0*A.y0,A.y1*A.y1),minimumD(A.x0*A.x0,A.x1*A.x1)*maximumD(A.y0*A.y0,A.y1*A.y1),maximumD(A.x0*A.x0,A.x1*A.x1)*minimumD(A.y0*A.y0,A.y1*A.y1),maximumD(A.x0*A.x0,A.x1*A.x1)*maximumD(A.y0*A.y0,A.y1*A.y1)))+minimumD(A.y0*A.y0*A.y0*A.y0,A.y1*A.y1*A.y1*A.y1)-maximumD(tricBx*minimumD(A.z0*A.z0,A.z1*A.z1),tricBx*maximumD(A.z0*A.z0,A.z1*A.z1));
 	fA.x1=tricC1x+maximumD(tricAx*A.x0,tricAx*A.x1)+maximumD(A.x0*A.x0*A.x0*A.x0,A.x1*A.x1*A.x1*A.x1)-(6*minimumD(minimumD(A.x0*A.x0,A.x1*A.x1)*minimumD(A.y0*A.y0,A.y1*A.y1),minimumD(A.x0*A.x0,A.x1*A.x1)*maximumD(A.y0*A.y0,A.y1*A.y1),maximumD(A.x0*A.x0,A.x1*A.x1)*minimumD(A.y0*A.y0,A.y1*A.y1),maximumD(A.x0*A.x0,A.x1*A.x1)*maximumD(A.y0*A.y0,A.y1*A.y1)))+maximumD(A.y0*A.y0*A.y0*A.y0,A.y1*A.y1*A.y1*A.y1)-minimumD(tricBx*minimumD(A.z0*A.z0,A.z1*A.z1),tricBx*maximumD(A.z0*A.z0,A.z1*A.z1));
 	fA.y0=tricC0y+minimumD(tricAy*A.y0,tricAy*A.y1)+4*minimumD((A.x0*A.x0*A.x0)*A.y0,(A.x0*A.x0*A.x0)*A.y1,(A.x1*A.x1*A.x1)*A.y0,(A.x1*A.x1*A.x1)*A.y1)-(4*maximumD((A.y0*A.y0*A.y0)*A.x0,(A.y0*A.y0*A.y0)*A.x1,(A.y1*A.y1*A.y1)*A.x0,(A.y1*A.y1*A.y1)*A.x1));
@@ -409,6 +804,8 @@ inline void getBoundingBoxfA_tricz4b(SpaceCube& A,SpaceCube& fA) {
 }
 
 inline void getBoundingBoxfA_tricz3b(SpaceCube& A,SpaceCube& fA) {
+	ctrbbxfa++;
+	
 	fA.x0=minimumD(tricAx*A.x0,tricAx*A.x1)+A.x0*A.x0*A.x0-(3*maximumD(A.x0*minimumD(A.y0*A.y0,A.y1*A.y1),A.x0*maximumD(A.y0*A.y0,A.y1*A.y1),A.x1*minimumD(A.y0*A.y0,A.y1*A.y1),A.x1*maximumD(A.y0*A.y0,A.y1*A.y1)))-maximumD(tricBx*minimumD(A.z0*A.z0,A.z1*A.z1),tricBx*maximumD(A.z0*A.z0,A.z1*A.z1))+tricC0x;
 	fA.x1=maximumD(tricAx*A.x0,tricAx*A.x1)+A.x1*A.x1*A.x1-(3*minimumD(A.x0*minimumD(A.y0*A.y0,A.y1*A.y1),A.x0*maximumD(A.y0*A.y0,A.y1*A.y1),A.x1*minimumD(A.y0*A.y0,A.y1*A.y1),A.x1*maximumD(A.y0*A.y0,A.y1*A.y1)))-minimumD(tricBx*minimumD(A.z0*A.z0,A.z1*A.z1),tricBx*maximumD(A.z0*A.z0,A.z1*A.z1))+tricC1x;
 	fA.y0=minimumD(tricAy*A.y0,tricAy*A.y1)+3*minimumD(minimumD(A.x0*A.x0,A.x1*A.x1)*A.y0,minimumD(A.x0*A.x0,A.x1*A.x1)*A.y1,maximumD(A.x0*A.x0,A.x1*A.x1)*A.y0,maximumD(A.x0*A.x0,A.x1*A.x1)*A.y1)-(A.y1*A.y1*A.y1)+tricC0y;
@@ -418,6 +815,8 @@ inline void getBoundingBoxfA_tricz3b(SpaceCube& A,SpaceCube& fA) {
 }
 
 inline void getBoundingBoxfA_baird5(SpaceCube& A,SpaceCube& fA) {
+	ctrbbxfa++;
+	
 	fA.x0=minimumD(tricAx*A.x0,tricAx*A.x1)+A.x0*A.x0*A.x0-(3*maximumD(A.x0*minimumD(A.y0*A.y0,A.y1*A.y1),A.x0*maximumD(A.y0*A.y0,A.y1*A.y1),A.x1*minimumD(A.y0*A.y0,A.y1*A.y1),A.x1*maximumD(A.y0*A.y0,A.y1*A.y1)))-maximumD(A.z0*A.z0,A.z1*A.z1)+tricC0x;
 	fA.x1=maximumD(tricAx*A.x0,tricAx*A.x1)+A.x1*A.x1*A.x1-(3*minimumD(A.x0*minimumD(A.y0*A.y0,A.y1*A.y1),A.x0*maximumD(A.y0*A.y0,A.y1*A.y1),A.x1*minimumD(A.y0*A.y0,A.y1*A.y1),A.x1*maximumD(A.y0*A.y0,A.y1*A.y1)))-minimumD(A.z0*A.z0,A.z1*A.z1)+tricC1x;
 	fA.y0=minimumD(tricAy*A.y0,tricAy*A.y1)+3*minimumD(minimumD(A.x0*A.x0,A.x1*A.x1)*A.y0,minimumD(A.x0*A.x0,A.x1*A.x1)*A.y1,maximumD(A.x0*A.x0,A.x1*A.x1)*A.y0,maximumD(A.x0*A.x0,A.x1*A.x1)*A.y1)-(A.y1*A.y1*A.y1)+tricC0y;
@@ -427,6 +826,8 @@ inline void getBoundingBoxfA_baird5(SpaceCube& A,SpaceCube& fA) {
 }
 
 inline void getBoundingBoxfA_baird(SpaceCube& A,SpaceCube& fA) {
+	ctrbbxfa++;
+	
 	fA.x0=minimumD(A.x0*A.x0,A.x0*A.x1,A.x1*A.x0,A.x1*A.x1)-maximumD(A.y0*A.y0,A.y0*A.y1,A.y1*A.y0,A.y1*A.y1)-maximumD(A.z0*A.z0,A.z0*A.z1,A.z1*A.z0,A.z1*A.z1)+tricC0x;
 	fA.x1=maximumD(A.x0*A.x0,A.x0*A.x1,A.x1*A.x0,A.x1*A.x1)-minimumD(A.y0*A.y0,A.y0*A.y1,A.y1*A.y0,A.y1*A.y1)-minimumD(A.z0*A.z0,A.z0*A.z1,A.z1*A.z0,A.z1*A.z1)+tricC1x;
 	fA.y0=2*minimumD(A.x0*A.y0,A.x0*A.y1,A.x1*A.y0,A.x1*A.y1)+tricC0y;
@@ -445,6 +846,18 @@ void Zeile::setToNonExistent(void) {
 
 // main object
 // struct Data3Ddyn
+void Data3Ddyn::markAllRevCGtovisit(const int aa) {
+	if (!revcgZ_YX) return;
+	
+	for(int z=0;z<REVCGmaxnumber;z++) {
+		if (revcgZ_YX[z]) {
+			for(int i=0;i<REVCGmaxnumberQ;i++) {
+				revcgZ_YX[z][i].tovisit=aa;
+			}
+		}
+	}
+}
+
 void Data3Ddyn::setGrayregionYZ(const int32_t ay,const int32_t az,const int32_t ag0,const int32_t ag1) {
 	int64_t idx=(int64_t)SCREENWIDTH*az + ay;
 	if (!planesZY[idx].werte) {
@@ -483,6 +896,7 @@ Data3Ddyn::Data3Ddyn() {
 	// or initialising froms scratch
 	encz0=ency0=encx0=0;
 	encz1=ency1=encx1=SCREENWIDTH-1;
+	revcgZ_YX=NULL;
 }
 
 void Data3Ddyn::saveRaw(const char* afn) {
@@ -718,6 +1132,16 @@ void calc(void) {
 		(CUBE.z0 > RANGE1)\
 	)
 	
+#define TOTALLYINCOMPLETE(CUBE) \
+	(\
+		(CUBE.x0 >= RANGE0) &&\
+		(CUBE.x1 <= RANGE1) &&\
+		(CUBE.y0 >= RANGE0) &&\
+		(CUBE.y1 <= RANGE1) &&\
+		(CUBE.z0 >= RANGE0) &&\
+		(CUBE.z1 <= RANGE1)\
+	)
+
 void Data3Ddyn::search_specext(void) {
 	SpaceCube A,bbxfA;
 	
@@ -735,7 +1159,7 @@ void Data3Ddyn::search_specext(void) {
 		A.z1=A.z0+scaleRangePerPixel;
 		
 		for(int32_t y=0;y<SCREENWIDTH;y++) {
-			int32_t g0=SCREENWIDTH, g1=0;
+			int32_t g0=SCREENWIDTH,g1=0;
 			
 			A.y0=y*scaleRangePerPixel + RANGE0;
 			A.y1=A.y0+scaleRangePerPixel;
@@ -751,6 +1175,8 @@ void Data3Ddyn::search_specext(void) {
 					setVoxel(x,y,z,CC_WHITE);
 					ctrw++;
 				} else {
+					// if it partially overlaps with the exterior
+					// set it to 
 					setVoxel(x,y,z,CC_GRAY);
 					ctrg++;
 					if (x < g0) g0=x;
@@ -764,142 +1190,358 @@ void Data3Ddyn::search_specext(void) {
 	} // z
 }
 
-void Data3Ddyn::search_directWhite(void) {
+void Data3Ddyn::search_potw(void) {
+	// only check GRAY cells
+	// no definite color propagation
+	
+	markAllRevCGtovisit(1);
+
 	int32_t changed=1;
-	int32_t noch0=SCREENWIDTH >> 2;
+	int32_t noch0=(SCREENWIDTH >> REVCGBITS) >> 2;
 	int32_t noch=1;
 	
 	SpaceCube A,bbxfA;
 	ScreenCube scr;
-	int32_t filenoch0=16;
-	#ifdef _LONGDOUBLE
-	filenoch0=8;
-	#endif
-	#ifdef _QUADPREC
-	filenoch0=4;
-	#endif
-	if (SCREENWIDTH >= 2048) filenoch0 >>= 1;
-	if (filenoch0<1) filenoch0=1;
-	int32_t filenoch=filenoch0;
+	int cgz,cgy,cgx;
+	int32_t lastsavetime=0;
+	int64_t checkclockat=ctrbbxfa+checkclockatbbxcount0;
 	
 	while (changed>0) {
 		changed=0;
-		if ((--filenoch)<=0) {
-			filenoch=filenoch0;
-			printf("saving temporary data ...");
-			saveRaw("_temp.raw");
+		if (ctrbbxfa > checkclockat) {
+			checkclockat += checkclockatbbxadd;
+			int t2=clock();
+			if ((t2-lastsavetime) > CLOCK1HOUR) {
+				printf("saving temporary data ...");
+				saveRaw("_temp.raw");
+				lastsavetime=t2;
+			}
 		}
 		
-		printf("\npropagating (potentially) white ... ");
-		for(int32_t z=encz0;z<=encz1;z++) {
-			int64_t zoff=z*SCREENWIDTH;
+		printf("\npropagating potentially white ... ");
+		for(int zouter=0;zouter<SCREENWIDTH;zouter+=REVCGBLOCKWIDTH) {
 			if ((--noch)<=0) {
 				noch=noch0;
-				printf("%i ",SCREENWIDTH-z);
+				printf("%i ",SCREENWIDTH-zouter);
+			}
+			if (
+				(zouter > encz1) ||
+				((zouter+REVCGBLOCKWIDTH) < encz0)
+			) continue; // outside gray
+			
+			cgz=zouter >> REVCGBITS;
+			for(int youter=0;youter<SCREENWIDTH;youter+=REVCGBLOCKWIDTH) {
+				if (
+					(youter > ency1) ||
+					((youter+REVCGBLOCKWIDTH) < ency0)
+				) continue; // outside gray
+
+				cgy=youter >> REVCGBITS;
+			
+				for(int xouter=0;xouter<SCREENWIDTH;xouter+=REVCGBLOCKWIDTH) {
+					if (
+						(xouter > encx1) ||
+						((xouter+REVCGBLOCKWIDTH) < encx0)
+					) continue; // outside gray
+
+					cgx=xouter >> REVCGBITS;
+			
+					if (revcgZ_YX) {
+						if (revcgZ_YX[cgz][cgy*REVCGmaxnumber+cgx].tovisit<=0) {
+							continue;
+						}
+						revcgZ_YX[cgz][cgy*REVCGmaxnumber+cgx].tovisit=0;
+					}
+						
+					int cgset=0;
+		
+					for(int32_t z=zouter;z<(zouter+REVCGBLOCKWIDTH);z++) {
+						int64_t zoff=(int64_t)z*SCREENWIDTH;
+			
+						A.z0=z*scaleRangePerPixel + RANGE0;
+						A.z1=A.z0+scaleRangePerPixel;
+			
+						for(int32_t y=youter;y<(youter+REVCGBLOCKWIDTH);y++) {
+							if (
+								(!planesZY[zoff+y].werte) ||
+								(planesZY[zoff+y].gb0 > planesZY[zoff+y].gb1) 
+							) continue;
+
+							const int32_t grau0=planesZY[zoff+y].gb0;
+							const int32_t grau1=planesZY[zoff+y].gb1;
+				
+							if (
+								(grau1 < grau0) ||
+								(xouter > grau1) ||
+								( (xouter+REVCGBLOCKWIDTH) < grau0)
+							) continue;
+				
+							A.y0=y*scaleRangePerPixel + RANGE0;
+							A.y1=A.y0+scaleRangePerPixel;
+
+							for(int32_t x=xouter;x<(xouter+REVCGBLOCKWIDTH);x++) {
+								uint16_t ff=getVoxel(x,y,z);
+								if ( 
+									(ff != CC_GRAY)
+								) continue;
+				
+								A.x0=x*scaleRangePerPixel + RANGE0;
+								A.x1=A.x0+scaleRangePerPixel;
+				
+								getBoundingBoxfA(A,bbxfA);
+					
+								int32_t trifftweiss=0,trifftgrau=0,trifftpotwgrau=0,trifftschwarz=0;
+					
+								if (TOTALLYINSPECEXT(bbxfA)) {
+									trifftweiss=1;
+									trifftgrau=trifftpotwgrau=trifftschwarz=0; 
+								} else {
+									trifftweiss=trifftschwarz=trifftgrau=trifftpotwgrau=0;
+									
+									if (TOTALLYINCOMPLETE(bbxfA) <= 0) {
+										trifftweiss=1;
+									}
+
+									// trims also
+									scr.x0=scrcoord0(bbxfA.x0);
+									scr.x1=scrcoord0(bbxfA.x1);
+									scr.y0=scrcoord0(bbxfA.y0);
+									scr.y1=scrcoord0(bbxfA.y1);
+									scr.z0=scrcoord0(bbxfA.z0);
+									scr.z1=scrcoord0(bbxfA.z1);
+									
+									// not-specext part check
+									// premature break if graypotw is found
+									// or deduced
+									for(int32_t dz=scr.z0;dz<=scr.z1;dz++) {
+										for(int32_t dy=scr.y0;dy<=scr.y1;dy++) {
+											for(int32_t dx=scr.x0;dx<=scr.x1;dx++) {
+												if (
+													(
+														(trifftweiss>0) &&
+														(
+															(trifftschwarz>0) ||
+															(trifftgrau>0)
+														)
+													)
+												) {
+													trifftpotwgrau=1;
+													break;
+												}
+												uint16_t f=getVoxel(dx,dy,dz);
+
+												switch (f) {
+													case CC_GRAY: trifftgrau=1; break;
+													case CC_GRAYPOTW: trifftpotwgrau=1; break;
+													case CC_WHITE: trifftweiss=1; break;
+													case CC_BLACK: trifftschwarz=1; break;
+												}
+											} // dx
+											if (trifftpotwgrau>0) break;
+										} // dy
+										if (trifftpotwgrau>0) break;
+									} // dz
+								}
+								
+								if ( 
+									(trifftpotwgrau>0) ||
+									(
+										(trifftweiss>0) &&
+										( (trifftgrau+trifftschwarz)>0 )
+									)
+								) {
+									// propagating potentially white
+									setVoxel(x,y,z,CC_GRAYPOTW);
+									changed=1;
+									if (revcgZ_YX) {
+										if (cgset<=0) {
+											cgset=1;
+											// reverse von aktuellem Punkt x,y,z
+											int64_t offrev=(int64_t)cgy*REVCGmaxnumber+cgx;
+											Parent *pp=&data->revcgZ_YX[cgz][offrev].parent[0];
+														
+											for(int i=0;i<data->revcgZ_YX[cgz][offrev].howmany;i++) {
+												data->revcgZ_YX
+													[pp[i].BZ]
+													[(int64_t)pp[i].BY*REVCGmaxnumber+pp[i].BX]
+													.tovisit=1;
+											} // i
+										}
+									} 
+								} 
+							} // x
+						} // y
+					} // z
+				} // xouter
+			} // youter
+		} // zouter
+	} // while
+}
+
+void Data3Ddyn::search_definite(void) {
+	// propagating white and black but NOT POTANTIALLY WHITE
+	// check GRAY and GRAYPOTW cells
+	markAllRevCGtovisit(1);
+	
+	int32_t changed=1;
+	int32_t noch0=(SCREENWIDTH >> REVCGBITS) >> 2;
+	int32_t noch=1;
+	
+	SpaceCube A,bbxfA;
+	ScreenCube scr;
+	int32_t cgx,cgy,cgz;
+	
+	int32_t lastsavetime=0;
+	int64_t checkclockat=ctrbbxfa+checkclockatbbxcount0;
+
+	while (changed>0) {
+		changed=0;
+		if (ctrbbxfa > checkclockat) {
+			checkclockat += checkclockatbbxadd;
+			int t2=clock();
+			if ((t2-lastsavetime) > CLOCK1HOUR) {
+				printf("saving temporary data ...");
+				saveRaw("_temp.raw");
+				lastsavetime=t2;
+			}
+		}
+		
+		printf("\npropagating definite cell color ... ");
+		for(int zouter=0;zouter<SCREENWIDTH;zouter+=REVCGBLOCKWIDTH) {
+			if ((--noch)<=0) {
+				noch=noch0;
+				printf("%i ",SCREENWIDTH-zouter);
 			}
 			
-			A.z0=z*scaleRangePerPixel + RANGE0;
-			A.z1=A.z0+scaleRangePerPixel;
+			if (
+				(zouter > encz1) ||
+				((zouter+REVCGBLOCKWIDTH) < encz0)
+			) continue; // outside gray
 			
-			for(int32_t y=ency0;y<=ency1;y++) {
+			cgz=zouter >> REVCGBITS;
+		
+			for(int youter=0;youter<SCREENWIDTH;youter+=REVCGBLOCKWIDTH) {
 				if (
-					(!planesZY[zoff+y].werte) ||
-					(planesZY[zoff+y].gb0 > planesZY[zoff+y].gb1) 
-				) continue;
-
-				A.y0=y*scaleRangePerPixel + RANGE0;
-				A.y1=A.y0+scaleRangePerPixel;
+					(youter > ency1) ||
+					((youter+REVCGBLOCKWIDTH) < ency0)
+				) continue; // outside gray
 			
-				int32_t grau=0;
+				cgy=youter >> REVCGBITS;
 				
-				const int32_t grau0=planesZY[zoff+y].gb0;
-				const int32_t grau1=planesZY[zoff+y].gb1;
-				
-				for(int32_t x=grau0;x<=grau1;x++) {
-					uint16_t ff=getVoxel(x,y,z);
-					if ( 
-						(ff != CC_GRAY) &&
-						(ff != CC_GRAYPOTW)
-					) continue;
-				
-					A.x0=x*scaleRangePerPixel + RANGE0;
-					A.x1=A.x0+scaleRangePerPixel;
-				
-					getBoundingBoxfA(A,bbxfA);
-					
-					int32_t trifftweiss=0,trifftgrau=0,trifftpotwgrau=0,trifftschwarz=0;
-					
-					if (TOTALLYINSPECEXT(bbxfA)) {
-						trifftweiss=1;
-						trifftgrau=trifftpotwgrau=trifftschwarz=0; 
-					} else {
-						scr.x0=scrcoord0(bbxfA.x0);
-						scr.x1=scrcoord0(bbxfA.x1);
-						scr.y0=scrcoord0(bbxfA.y0);
-						scr.y1=scrcoord0(bbxfA.y1);
-						scr.z0=scrcoord0(bbxfA.z0);
-						scr.z1=scrcoord0(bbxfA.z1);
-						
-						trifftweiss=trifftschwarz=trifftgrau=trifftpotwgrau=0;
-						
-						if (
-							(scr.x0 < 0) ||
-							(scr.x1 >= SCREENWIDTH) ||
-							(scr.y0 < 0) ||
-							(scr.y1 >= SCREENWIDTH) ||
-							(scr.z0 < 0) ||
-							(scr.z1 >= SCREENWIDTH)
-						) {
-							trifftweiss=1;
-						} 
-						
-						TRIM(scr.x0)
-						TRIM(scr.x1)
-						TRIM(scr.y0)
-						TRIM(scr.y1)
-						TRIM(scr.z0)
-						TRIM(scr.z1)
-						
-						// not-specext part check
-						for(int32_t dz=scr.z0;dz<=scr.z1;dz++) {
-							for(int32_t dy=scr.y0;dy<=scr.y1;dy++) {
-								for(int32_t dx=scr.x0;dx<=scr.x1;dx++) {
-									uint16_t f=getVoxel(dx,dy,dz);
-									switch (f) {
-										case CC_GRAY: trifftgrau=1; break;
-										case CC_GRAYPOTW: trifftpotwgrau=1; break;
-										case CC_WHITE: trifftweiss=1; break;
-										case CC_BLACK: trifftschwarz=1; break;
-									}
-								} // dx
-							} // dy
-						} // dz
-					}
-					
+				for(int xouter=0;xouter<SCREENWIDTH;xouter+=REVCGBLOCKWIDTH) {
 					if (
-						(trifftweiss > 0) && 
-						(trifftschwarz == 0) &&
-						(trifftgrau == 0) &&
-						(trifftpotwgrau == 0) 
-					) {
-						// only white cells intersected => propagate white
-						setVoxel(x,y,z,CC_WHITE);
-						changed=1;
-					} else if ( (trifftweiss>0) || (trifftpotwgrau>0) ) {
-						// propagating potentially white
-						grau=1;
-						if (getVoxel(x,y,z) != CC_GRAYPOTW) {
-							setVoxel(x,y,z,CC_GRAYPOTW);
-							changed=1;
-						} 
-					} else {
-						// no change
-						grau=1;
+						(xouter > encx1) ||
+						((xouter+REVCGBLOCKWIDTH) < encx0)
+					) continue; // outside gray
+
+					cgx=xouter >> REVCGBITS;
+			
+					if (revcgZ_YX) {
+						if (revcgZ_YX[cgz][cgy*REVCGmaxnumber+cgx].tovisit<=0) {
+							continue;
+						}
+						revcgZ_YX[cgz][cgy*REVCGmaxnumber+cgx].tovisit=0;
 					}
-				} // x
-				if (grau<=0) planesZY[zoff+y].gb0=SCREENWIDTH;
-			} // y
-		} // z
+			
+					int cgset=0; // reverse not yet set to visit
+		
+					for(int32_t z=zouter;z<(zouter+REVCGBLOCKWIDTH);z++) {
+						int64_t zoff=z*SCREENWIDTH;
+			
+						A.z0=z*scaleRangePerPixel + RANGE0;
+						A.z1=A.z0+scaleRangePerPixel;
+			
+						for(int32_t y=youter;y<(youter+REVCGBLOCKWIDTH);y++) {
+							if (
+								(!planesZY[zoff+y].werte) ||
+								(planesZY[zoff+y].gb0 > planesZY[zoff+y].gb1) 
+							) continue;
+
+							const int32_t grau0=planesZY[zoff+y].gb0;
+							const int32_t grau1=planesZY[zoff+y].gb1;
+				
+							if (
+								(grau1 < grau0) ||
+								(xouter > grau1) ||
+								( (xouter+REVCGBLOCKWIDTH) < grau0)
+							) continue;
+
+							A.y0=y*scaleRangePerPixel + RANGE0;
+							A.y1=A.y0+scaleRangePerPixel;
+
+							for(int32_t x=xouter;x<(xouter+REVCGBLOCKWIDTH);x++) {
+								uint16_t ff=getVoxel(x,y,z);
+								if ( 
+									(ff != CC_GRAY) 
+								) continue;
+					
+								A.x0=x*scaleRangePerPixel + RANGE0;
+								A.x1=A.x0+scaleRangePerPixel;
+				
+								getBoundingBoxfA(A,bbxfA);
+					
+								int definitcolor=-1;
+								if (TOTALLYINSPECEXT(bbxfA)) {
+									definitcolor=CC_WHITE;
+								} else {
+									if (TOTALLYINCOMPLETE(bbxfA)<=0) {
+										definitcolor=CC_WHITE;
+										// valid if every definite color in the bbx is white
+									}
+									
+									// trams also
+									scr.x0=scrcoord0(bbxfA.x0);
+									scr.x1=scrcoord0(bbxfA.x1);
+									scr.y0=scrcoord0(bbxfA.y0);
+									scr.y1=scrcoord0(bbxfA.y1);
+									scr.z0=scrcoord0(bbxfA.z0);
+									scr.z1=scrcoord0(bbxfA.z1);
+						
+									for(int32_t dz=scr.z0;dz<=scr.z1;dz++) {
+										for(int32_t dy=scr.y0;dy<=scr.y1;dy++) {
+											for(int32_t dx=scr.x0;dx<=scr.x1;dx++) {
+												uint16_t f=getVoxel(dx,dy,dz);
+												if ((f==CC_GRAY)||(f==CC_GRAYPOTW)) {
+													definitcolor=-2;
+													break;
+												} else if (definitcolor==-1) definitcolor=f;
+												else if (f != definitcolor) {
+													definitcolor=-2;
+													break;
+												}
+											} // dx
+											if (definitcolor==-2) break;
+										} // dy
+										if (definitcolor==-2) break;
+									} // dz
+								}
+					
+								if (definitcolor>=0) {
+									setVoxel(x,y,z,definitcolor);
+									changed=1;
+									if (revcgZ_YX) {
+										if (cgset<=0) {
+											cgset=1;
+
+											// reverse von aktuellem Punkt x,y,z
+											int64_t offrev=(int64_t)cgy*REVCGmaxnumber+cgx;
+											Parent *pp=&data->revcgZ_YX[cgz][offrev].parent[0];
+											
+											for(int i=0;i<data->revcgZ_YX[cgz][offrev].howmany;i++) {
+												data->revcgZ_YX
+													[pp[i].BZ]
+													[(int64_t)pp[i].BY*REVCGmaxnumber+pp[i].BX]
+													.tovisit=1;
+											} // i
+										}
+									} 
+								} 
+							} // x
+						} // y
+					} // z
+				} // xouter
+			} // youter
+		} // zouter
 	} // while
 }
 
@@ -999,17 +1641,17 @@ void Data3Ddyn::convert_to_BitCube(const char* afn) {
 					f=CC_WHITE;
 				} else {
 					for(int32_t dz=0;dz<_TWDSTEP;dz++) {
-						if ( (zbig+dz) >= z1 ) {
+						if ( (zbig+dz) > z1 ) {
 							f=CC_GRAY;
 							break;
 						}
 						for(int32_t dy=0;dy<_TWDSTEP;dy++) {
-							if ( (ybig+dy) >= z1 ) {
+							if ( (ybig+dy) > y1 ) {
 								f=CC_GRAY;
 								break;
 							}
 							for(int32_t dx=0;dx<_TWDSTEP;dx++) {
-								if ( (xbig+dx) >= z1 ) {
+								if ( (xbig+dx) > x1 ) {
 									f=CC_GRAY;
 									break;
 								}
@@ -1033,7 +1675,11 @@ void Data3Ddyn::convert_to_BitCube(const char* afn) {
 				if (f==CC_WHITE) ctrweiss++;
 				else if (f==CC_GRAY) ctrgrau++;
 				else if (f==CC_GRAYPOTW) ctrpotwgrau++;
-				else if (f==CC_BLACK) ctrschwarz++;
+				else {
+					// schwarz und Sekundärfarbe
+					//if (f != CC_GRAY) printf("%i ",f);
+					ctrschwarz++;
+				}
 
 				if (f>=256) {
 					LOGMSG2("Implementation error. Secondary Color %i\n",f);
@@ -1043,7 +1689,7 @@ void Data3Ddyn::convert_to_BitCube(const char* afn) {
 				plane[ycubeoff+xcube*3+2]=pal256[f].R; 
 				plane[ycubeoff+xcube*3+1]=pal256[f].G; 
 				plane[ycubeoff+xcube*3  ]=pal256[f].B; 
-				
+
 			} // xbig
 		} // ybig
 
@@ -1051,6 +1697,9 @@ void Data3Ddyn::convert_to_BitCube(const char* afn) {
 	} // zbig
 	
 	delete[] plane;
+	
+	LOGMSG4("converted to %I64d interior, %I64d exterior, %I64d gray voxels\n",
+		ctrschwarz,ctrweiss,ctrgrau+ctrpotwgrau);
 	
 	fclose(f);
 }
@@ -1130,21 +1779,55 @@ void initRGBPal(void) {
 	// cycle 4 bright green / dark green
 	SETCOLCYC(FATOUCOMPONENTCOLOROFFSET+6,0,255,0);
 	SETCOLCYC(FATOUCOMPONENTCOLOROFFSET+7,80,160,80);
+	
+	// random first color
+	#define SWAPINT(a,b) \
+	{\
+		int c=a;\
+		a=b;\
+		b=c;\
+	}
+	srand(time(NULL));
+	int a=rand()%4;
+	if (_CYCLE1COLOR>=0) a=_CYCLE1COLOR;
+	
+	if (a != 0) {
+		int idx0=FATOUCOMPONENTCOLOROFFSET+0;
+		int idx1=FATOUCOMPONENTCOLOROFFSET+2*a;
+		SWAPINT(pal256[idx0].R,pal256[idx1].R);
+		SWAPINT(pal256[idx0].G,pal256[idx1].G);
+		SWAPINT(pal256[idx0].B,pal256[idx1].B);
+		SWAPINT(pal256[idx0+1].R,pal256[idx1+1].R);
+		SWAPINT(pal256[idx0+1].G,pal256[idx1+1].G);
+		SWAPINT(pal256[idx0+1].B,pal256[idx1+1].B);
+	}
+	
 }
 
 char* seedCstr(char* erg) {
 	sprintf(erg,"c_ia_%.20lg_%.20lg_x_%.20lg_%.20lg_x_%.20lg_%.20lg",
-		tricC0x,tricC1x,tricC0y,tricC1y,tricC0z,tricC1z);
+		(double)tricC0x,
+		(double)tricC1x,
+		(double)tricC0y,
+		(double)tricC1y,
+		(double)tricC0z,
+		(double)tricC1z);
 	return erg;
 }
 
 char* TRICAstr(char* erg) {
-	sprintf(erg,"A_fx_%.20lg_%.20lg_%.20lg",tricAx,tricAy,tricAz);;
+	sprintf(erg,"A_fx_%.20lg_%.20lg_%.20lg",
+		(double)tricAx,
+		(double)tricAy,
+		(double)tricAz);;
 	return erg;
 }
 
 char* TRICBstr(char* erg) {
-	sprintf(erg,"B_fx_%.20lg_%.20lg_%.20lg",tricBx,tricBy,tricBz);;
+	sprintf(erg,"B_fx_%.20lg_%.20lg_%.20lg",
+		(double)tricBx,
+		(double)tricBy,
+		(double)tricBz);;
 	return erg;
 }
 
@@ -1178,43 +1861,171 @@ void set_TRICB_int64_t_XYZ(const int64_t ax,const int64_t ay,const int64_t az) {
 	tricBz = az; tricBz /= DENOM225;
 }
 
+int32_t bitsSufficient(
+	const char* as,
+	const int32_t aRANGE,
+	const int32_t aREFINEMENT,
+	const char* aNTS
+) {
+	char rl[128];
+	char *test=new char[strlen(as)+16];
+	strcpy(test,as);
+	upper(test);
+	sprintf(rl,";R%iL%i,",aRANGE,aREFINEMENT);
+	upper(rl);
+	char *p=strstr(test,rl);
+	if (!p) {
+		delete[] test;
+		return 0;
+	}
+	// ;R2L8,A,D,LD,F1,QD,FP,;
+	char *p2=strstr(p+1,",;");
+	if (!p2) {
+		delete[] test;
+		return 0;
+	}
+	p2[1]=0;
+	sprintf(rl,",%s,",aNTS);
+	if (strstr(p,rl)) {
+		delete[] test;
+		return 1;
+	}
+
+	delete[] test;
+	return 0;
+}
+
+int32_t testQ(void) {
+	if ( fabs( (double)varQ ) > 2.0 ) return 0;
+	return 1;
+}
+
+int32_t testP(void) {
+	if ( fabs( (double)varP ) > 2.0 ) return 0;
+	return 1;
+}
+
+int32_t testO(void) {
+	if ( fabs( (double)varO ) > 2.0 ) return 0;
+	return 1;
+}
+
+int32_t testN(void) {
+	if ( fabs( (double)varN ) > 2.0 ) return 0;
+	return 1;
+}
+
+int32_t testM(void) {
+	if ( fabs( (double)varM ) > 2.0 ) return 0;
+	return 1;
+}
+
+int32_t testL(void) {
+	if ( fabs( (double)varL ) > 2.0 ) return 0;
+	return 1;
+}
+
+int32_t testK(void) {
+	if ( fabs( (double)varK ) > 2.0 ) return 0;
+	return 1;
+}
+
+int32_t testJ(void) {
+	if ( fabs( (double)varJ ) > 2.0 ) return 0;
+	return 1;
+}
+
+int32_t testH(void) {
+	if ( fabs( (double)varH ) > 2.0 ) return 0;
+	return 1;
+}
+
+int32_t testG(void) {
+	if ( fabs( (double)varG ) > 2.0 ) return 0;
+	return 1;
+}
+
+int32_t testF(void) {
+	if ( fabs( (double)varF ) > 2.0 ) return 0;
+	return 1;
+}
+
+int32_t testE(void) {
+	if ( fabs( (double)varE ) > 2.0 ) return 0;
+	return 1;
+}
+
+int32_t testB(void) {
+	if (
+		( fabs( (double)tricBx ) > 2.0 ) ||
+		( fabs( (double)tricBy ) > 2.0 ) ||
+		( fabs( (double)tricBz ) > 2.0 )
+	) return 0;
+
+	return 1;
+}
+
+int32_t testA(void) {
+	if (
+		( fabs( (double)tricAx ) > 2.0 ) ||
+		( fabs( (double)tricAy ) > 2.0 ) ||
+		( fabs( (double)tricAz ) > 2.0 )
+	) return 0;
+
+	return 1;
+}
+
 // setting the function pointer, filename
-void setfunc(char* fn) {
+int8_t setfunc_and_bittest(char* fn) {
 	fn[0]=0;
 	char tmp2[1024],tmp3[1024],tmp4[1024];
-	
+
 	#define CAUS \
 	{\
 		fprintf(flog,"C={%I64d..%I64d,%I64d..%I64d,%I64d..%I64d} / %I64d\n",\
-			(int64_t)floor(DENOM225*tricC0x),\
-			(int64_t)floor(DENOM225*tricC1x),\
-			(int64_t)floor(DENOM225*tricC0y),\
-			(int64_t)floor(DENOM225*tricC1y),\
-			(int64_t)floor(DENOM225*tricC0z),\
-			(int64_t)floor(DENOM225*tricC1z),DENOM225);\
+			(int64_t)floor(DENOM225*(double)tricC0x),\
+			(int64_t)floor(DENOM225*(double)tricC1x),\
+			(int64_t)floor(DENOM225*(double)tricC0y),\
+			(int64_t)floor(DENOM225*(double)tricC1y),\
+			(int64_t)floor(DENOM225*(double)tricC0z),\
+			(int64_t)floor(DENOM225*(double)tricC1z),DENOM225);\
 	}
 					
 	#define AAUS \
 	{\
 		fprintf(flog,"A={%I64d,%I64d,%I64d} / %I64d\n",\
-			(int64_t)floor(DENOM225*tricAx),\
-			(int64_t)floor(DENOM225*tricAy),\
-			(int64_t)floor(DENOM225*tricAz),DENOM225); \
+			(int64_t)floor(DENOM225*(double)tricAx),\
+			(int64_t)floor(DENOM225*(double)tricAy),\
+			(int64_t)floor(DENOM225*(double)tricAz),DENOM225); \
 	}
 
 	#define BAUS \
 	{\
 		fprintf(flog,"B={%I64d,%I64d,%I64d} / %I64d\n",\
-			(int64_t)floor(DENOM225*tricBx),\
-			(int64_t)floor(DENOM225*tricBy),\
-			(int64_t)floor(DENOM225*tricBz),DENOM225); \
+			(int64_t)floor(DENOM225*(double)tricBx),\
+			(int64_t)floor(DENOM225*(double)tricBy),\
+			(int64_t)floor(DENOM225*(double)tricBz),DENOM225); \
 	}
 	
 	#define VARAUS(CH,VARNAME) \
 	{\
 		fprintf(flog,"%c=(%I64d / %I64d) (=%.20lg)\n",\
-			CH,DENOM225,(int64_t)floor(DENOM225*VARNAME),VARNAME);\
+			CH,DENOM225,(int64_t)floor(DENOM225*(double)VARNAME),(double)VARNAME);\
 	}
+
+	int8_t bitprecision=1; // bits sufficient
+
+	// C-value in range 2
+	if (
+		( fabs( (double)tricC0x ) > 2.0 ) || 
+		( fabs( (double)tricC1x ) > 2.0 ) || 
+		( fabs( (double)tricC0y ) > 2.0 ) || 
+		( fabs( (double)tricC1y ) > 2.0 ) || 
+		( fabs( (double)tricC0z ) > 2.0 ) || 
+		( fabs( (double)tricC1z ) > 2.0 )
+	) bitprecision=0;
+	
+	int32_t RANGEINT=(int32_t)fabs(RANGE1);
 
 	switch (_FUNC) {
 		case FUNC_MAKINEXP5:
@@ -1222,21 +2033,64 @@ void setfunc(char* fn) {
 			REFINEMENTLEVEL,NNTYPSTR,seedCstr(tmp2),
 			varH,varM,varN);
 			getBoundingBoxfA=getBoundingBoxfA_makinexp5;
-			bitpower=3;
 			CAUS
 			VARAUS('H',varH)
 			VARAUS('M',varM)
 			VARAUS('N',varN)
+
+			if (bitprecision) if (testH() <= 0) bitprecision=0;
+			if (bitprecision) if (testM() <= 0) bitprecision=0;
+			if (bitprecision) if (testN() <= 0) bitprecision=0;
+			
+			// real part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,LD,F1,QD,FP,;R2L14,A,LD,F1,QD,FP,;R2L15,A,LD,F1,QD,FP,;R2L16,A,LD,F1,QD,FP,;R2L17,A,LD,F1,QD,FP,;R2L18,A,F1,QD,FP,;R2L19,A,F1,QD,FP,;R2L20,A,F1,QD,FP,;R2L21,A,F1,QD,FP,;R2L22,A,F1,QD,FP,;R2L23,A,F1,QD,FP,;R2L24,A,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,LD,F1,QD,FP,;R4L14,A,LD,F1,QD,FP,;R4L15,A,LD,F1,QD,FP,;R4L16,A,LD,F1,QD,FP,;R4L17,A,LD,F1,QD,FP,;R4L18,A,F1,QD,FP,;R4L19,A,F1,QD,FP,;R4L20,A,F1,QD,FP,;R4L21,A,F1,QD,FP,;R4L22,A,F1,QD,FP,;R4L23,A,F1,QD,FP,;R4L24,A,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,LD,F1,QD,FP,;R8L13,A,LD,F1,QD,FP,;R8L14,A,LD,F1,QD,FP,;R8L15,A,LD,F1,QD,FP,;R8L16,A,LD,F1,QD,FP,;R8L17,A,F1,QD,FP,;R8L18,A,F1,QD,FP,;R8L19,A,F1,QD,FP,;R8L20,A,F1,QD,FP,;R8L21,A,F1,QD,FP,;R8L22,A,F1,QD,FP,;R8L23,A,F1,QD,FP,;R8L24,A,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+			
+			// imaginary part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,LD,F1,QD,FP,;R2L14,A,LD,F1,QD,FP,;R2L15,A,LD,F1,QD,FP,;R2L16,A,LD,F1,QD,FP,;R2L17,A,LD,F1,QD,FP,;R2L18,A,F1,QD,FP,;R2L19,A,F1,QD,FP,;R2L20,A,F1,QD,FP,;R2L21,A,F1,QD,FP,;R2L22,A,F1,QD,FP,;R2L23,A,F1,QD,FP,;R2L24,A,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,LD,F1,QD,FP,;R4L14,A,LD,F1,QD,FP,;R4L15,A,LD,F1,QD,FP,;R4L16,A,LD,F1,QD,FP,;R4L17,A,LD,F1,QD,FP,;R4L18,A,F1,QD,FP,;R4L19,A,F1,QD,FP,;R4L20,A,F1,QD,FP,;R4L21,A,F1,QD,FP,;R4L22,A,F1,QD,FP,;R4L23,A,F1,QD,FP,;R4L24,A,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,LD,F1,QD,FP,;R8L13,A,LD,F1,QD,FP,;R8L14,A,LD,F1,QD,FP,;R8L15,A,LD,F1,QD,FP,;R8L16,A,LD,F1,QD,FP,;R8L17,A,F1,QD,FP,;R8L18,A,F1,QD,FP,;R8L19,A,F1,QD,FP,;R8L20,A,F1,QD,FP,;R8L21,A,F1,QD,FP,;R8L22,A,F1,QD,FP,;R8L23,A,F1,QD,FP,;R8L24,A,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
+			// z-part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,D,LD,F1,QD,FP,;R2L19,A,D,LD,F1,QD,FP,;R2L20,A,D,LD,F1,QD,FP,;R2L21,A,D,LD,F1,QD,FP,;R2L22,A,D,LD,F1,QD,FP,;R2L23,A,D,LD,F1,QD,FP,;R2L24,A,D,LD,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,D,LD,F1,QD,FP,;R4L19,A,D,LD,F1,QD,FP,;R4L20,A,D,LD,F1,QD,FP,;R4L21,A,D,LD,F1,QD,FP,;R4L22,A,D,LD,F1,QD,FP,;R4L23,A,D,LD,F1,QD,FP,;R4L24,A,D,LD,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,D,LD,F1,QD,FP,;R8L19,A,D,LD,F1,QD,FP,;R8L20,A,D,LD,F1,QD,FP,;R8L21,A,D,LD,F1,QD,FP,;R8L22,A,D,LD,F1,QD,FP,;R8L23,A,D,LD,F1,QD,FP,;R8L24,A,D,LD,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
 			break;
 		case FUNC_MAKINEXP4B:
 			sprintf(fn,"_L%02i_%s_makinexp4b_%s_%s_%s",
 			REFINEMENTLEVEL,NNTYPSTR,seedCstr(tmp2),
 			TRICAstr(tmp3),TRICBstr(tmp4));
 			getBoundingBoxfA=getBoundingBoxfA_makinexp4b;
-			bitpower=5;
 			CAUS
 			AAUS
 			BAUS
+
+			if (bitprecision) if (testA() <= 0) bitprecision=0;
+			if (bitprecision) if (testB() <= 0) bitprecision=0;
+			
+			// real part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,LD,F1,QD,FP,;R2L9,A,LD,F1,QD,FP,;R2L10,A,F1,QD,FP,;R2L11,A,F1,QD,FP,;R2L12,A,F1,QD,FP,;R2L13,A,F1,QD,FP,;R2L14,A,F1,QD,FP,;R2L15,A,F1,QD,FP,;R2L16,A,F1,QD,FP,;R2L17,A,F1,QD,FP,;R2L18,A,F1,QD,FP,;R2L19,A,F1,QD,FP,;R2L20,A,F1,QD,;R2L21,A,QD,;R2L22,A,QD,;R2L23,A,QD,;R2L24,A,QD,;R4L8,A,LD,F1,QD,FP,;R4L9,A,LD,F1,QD,FP,;R4L10,A,F1,QD,FP,;R4L11,A,F1,QD,FP,;R4L12,A,F1,QD,FP,;R4L13,A,F1,QD,FP,;R4L14,A,F1,QD,FP,;R4L15,A,F1,QD,FP,;R4L16,A,F1,QD,FP,;R4L17,A,F1,QD,FP,;R4L18,A,F1,QD,FP,;R4L19,A,F1,QD,FP,;R4L20,A,F1,QD,FP,;R4L21,A,QD,;R4L22,A,QD,;R4L23,A,QD,;R4L24,A,QD,;R8L8,A,LD,F1,QD,FP,;R8L9,A,LD,F1,QD,FP,;R8L10,A,F1,QD,FP,;R8L11,A,F1,QD,FP,;R8L12,A,F1,QD,FP,;R8L13,A,F1,QD,FP,;R8L14,A,F1,QD,FP,;R8L15,A,F1,QD,FP,;R8L16,A,F1,QD,FP,;R8L17,A,F1,QD,FP,;R8L18,A,F1,QD,FP,;R8L19,A,F1,QD,FP,;R8L20,A,F1,QD,FP,;R8L21,A,QD,FP,;R8L22,A,QD,;R8L23,A,QD,;R8L24,A,QD,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+			
+			// imaginary part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,LD,F1,QD,FP,;R2L15,A,LD,F1,QD,FP,;R2L16,A,LD,F1,QD,FP,;R2L17,A,F1,QD,FP,;R2L18,A,F1,QD,FP,;R2L19,A,F1,QD,FP,;R2L20,A,F1,QD,FP,;R2L21,A,F1,QD,FP,;R2L22,A,F1,QD,FP,;R2L23,A,F1,QD,FP,;R2L24,A,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,LD,F1,QD,FP,;R4L15,A,LD,F1,QD,FP,;R4L16,A,LD,F1,QD,FP,;R4L17,A,F1,QD,FP,;R4L18,A,F1,QD,FP,;R4L19,A,F1,QD,FP,;R4L20,A,F1,QD,FP,;R4L21,A,F1,QD,FP,;R4L22,A,F1,QD,FP,;R4L23,A,F1,QD,FP,;R4L24,A,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,LD,F1,QD,FP,;R8L15,A,LD,F1,QD,FP,;R8L16,A,LD,F1,QD,FP,;R8L17,A,F1,QD,FP,;R8L18,A,F1,QD,FP,;R8L19,A,F1,QD,FP,;R8L20,A,F1,QD,FP,;R8L21,A,F1,QD,FP,;R8L22,A,F1,QD,FP,;R8L23,A,F1,QD,FP,;R8L24,A,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
+			// z-part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,D,LD,F1,QD,FP,;R2L19,A,D,LD,F1,QD,FP,;R2L20,A,D,LD,F1,QD,FP,;R2L21,A,D,LD,F1,QD,FP,;R2L22,A,D,LD,F1,QD,FP,;R2L23,A,D,LD,F1,QD,FP,;R2L24,A,D,LD,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,D,LD,F1,QD,FP,;R4L19,A,D,LD,F1,QD,FP,;R4L20,A,D,LD,F1,QD,FP,;R4L21,A,D,LD,F1,QD,FP,;R4L22,A,D,LD,F1,QD,FP,;R4L23,A,D,LD,F1,QD,FP,;R4L24,A,D,LD,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,D,LD,F1,QD,FP,;R8L19,A,D,LD,F1,QD,FP,;R8L20,A,D,LD,F1,QD,FP,;R8L21,A,D,LD,F1,QD,FP,;R8L22,A,D,LD,F1,QD,FP,;R8L23,A,D,LD,F1,QD,FP,;R8L24,A,D,LD,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
 			break;
 		case FUNC_TRICZ5D:
 			sprintf(fn,"_L%02i_%s_tricz5d_%s_vars",
@@ -1244,23 +2098,65 @@ void setfunc(char* fn) {
 			seedCstr(tmp2)
 			);
 			getBoundingBoxfA=getBoundingBoxfA_tricz5d;
-			bitpower=5;
 			CAUS
 			VARAUS('E',varE)
 			VARAUS('F',varF)
 			VARAUS('H',varH)
+
+			if (bitprecision) if (testE() <= 0) bitprecision=0;
+			if (bitprecision) if (testF() <= 0) bitprecision=0;
+			if (bitprecision) if (testH() <= 0) bitprecision=0;
+			
+			// real part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,LD,F1,QD,FP,;R2L12,A,LD,F1,QD,FP,;R2L13,A,F1,QD,FP,;R2L14,A,F1,QD,FP,;R2L15,A,F1,QD,FP,;R2L16,A,F1,QD,FP,;R2L17,A,F1,QD,FP,;R2L18,A,F1,QD,FP,;R2L19,A,F1,QD,FP,;R2L20,A,F1,QD,FP,;R2L21,A,F1,QD,FP,;R2L22,A,QD,;R2L23,A,QD,;R2L24,A,QD,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,LD,F1,QD,FP,;R4L11,A,LD,F1,QD,FP,;R4L12,A,LD,F1,QD,FP,;R4L13,A,F1,QD,FP,;R4L14,A,F1,QD,FP,;R4L15,A,F1,QD,FP,;R4L16,A,F1,QD,FP,;R4L17,A,F1,QD,FP,;R4L18,A,F1,QD,FP,;R4L19,A,F1,QD,FP,;R4L20,A,F1,QD,FP,;R4L21,A,F1,QD,FP,;R4L22,A,QD,FP,;R4L23,A,QD,;R4L24,A,QD,;R8L8,A,LD,F1,QD,FP,;R8L9,A,LD,F1,QD,FP,;R8L10,A,LD,F1,QD,FP,;R8L11,A,LD,F1,QD,FP,;R8L12,A,LD,F1,QD,FP,;R8L13,A,F1,QD,FP,;R8L14,A,F1,QD,FP,;R8L15,A,F1,QD,FP,;R8L16,A,F1,QD,FP,;R8L17,A,F1,QD,FP,;R8L18,A,F1,QD,FP,;R8L19,A,F1,QD,FP,;R8L20,A,F1,QD,FP,;R8L21,A,F1,QD,FP,;R8L22,A,QD,FP,;R8L23,A,QD,FP,;R8L24,A,QD,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+			
+			// imaginary part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,LD,F1,QD,FP,;R2L12,A,LD,F1,QD,FP,;R2L13,A,F1,QD,FP,;R2L14,A,F1,QD,FP,;R2L15,A,F1,QD,FP,;R2L16,A,F1,QD,FP,;R2L17,A,F1,QD,FP,;R2L18,A,F1,QD,FP,;R2L19,A,F1,QD,FP,;R2L20,A,F1,QD,FP,;R2L21,A,F1,QD,FP,;R2L22,A,QD,;R2L23,A,QD,;R2L24,A,QD,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,LD,F1,QD,FP,;R4L12,A,LD,F1,QD,FP,;R4L13,A,F1,QD,FP,;R4L14,A,F1,QD,FP,;R4L15,A,F1,QD,FP,;R4L16,A,F1,QD,FP,;R4L17,A,F1,QD,FP,;R4L18,A,F1,QD,FP,;R4L19,A,F1,QD,FP,;R4L20,A,F1,QD,FP,;R4L21,A,F1,QD,FP,;R4L22,A,QD,FP,;R4L23,A,QD,;R4L24,A,QD,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,LD,F1,QD,FP,;R8L12,A,LD,F1,QD,FP,;R8L13,A,F1,QD,FP,;R8L14,A,F1,QD,FP,;R8L15,A,F1,QD,FP,;R8L16,A,F1,QD,FP,;R8L17,A,F1,QD,FP,;R8L18,A,F1,QD,FP,;R8L19,A,F1,QD,FP,;R8L20,A,F1,QD,FP,;R8L21,A,F1,QD,FP,;R8L22,A,QD,FP,;R8L23,A,QD,FP,;R8L24,A,QD,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
+			// z-part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,D,LD,F1,QD,FP,;R2L19,A,D,LD,F1,QD,FP,;R2L20,A,D,LD,F1,QD,FP,;R2L21,A,D,LD,F1,QD,FP,;R2L22,A,D,LD,F1,QD,FP,;R2L23,A,D,LD,F1,QD,FP,;R2L24,A,D,LD,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,D,LD,F1,QD,FP,;R4L19,A,D,LD,F1,QD,FP,;R4L20,A,D,LD,F1,QD,FP,;R4L21,A,D,LD,F1,QD,FP,;R4L22,A,D,LD,F1,QD,FP,;R4L23,A,D,LD,F1,QD,FP,;R4L24,A,D,LD,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,D,LD,F1,QD,FP,;R8L19,A,D,LD,F1,QD,FP,;R8L20,A,D,LD,F1,QD,FP,;R8L21,A,D,LD,F1,QD,FP,;R8L22,A,D,LD,F1,QD,FP,;R8L23,A,D,LD,F1,QD,FP,;R8L24,A,D,LD,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
 			break;
 		case FUNC_MAKINEXP4:
 			sprintf(fn,"_L%02i_%s_makinexp4_%s_%s_%s",
 			REFINEMENTLEVEL,NNTYPSTR,seedCstr(tmp2),
 			TRICAstr(tmp3),TRICBstr(tmp4));
 			getBoundingBoxfA=getBoundingBoxfA_makinexp4;
-			bitpower=4;
 			CAUS
 			AAUS
 			BAUS
-			break;
 
+			if (bitprecision) if (testA() <= 0) bitprecision=0;
+			if (bitprecision) if (testB() <= 0) bitprecision=0;
+			
+			// real part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,LD,F1,QD,FP,;R2L14,A,LD,F1,QD,FP,;R2L15,A,LD,F1,QD,FP,;R2L16,A,LD,F1,QD,FP,;R2L17,A,F1,QD,FP,;R2L18,A,F1,QD,FP,;R2L19,A,F1,QD,FP,;R2L20,A,F1,QD,FP,;R2L21,A,F1,QD,FP,;R2L22,A,F1,QD,FP,;R2L23,A,F1,QD,FP,;R2L24,A,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,LD,F1,QD,FP,;R4L13,A,LD,F1,QD,FP,;R4L14,A,LD,F1,QD,FP,;R4L15,A,LD,F1,QD,FP,;R4L16,A,LD,F1,QD,FP,;R4L17,A,F1,QD,FP,;R4L18,A,F1,QD,FP,;R4L19,A,F1,QD,FP,;R4L20,A,F1,QD,FP,;R4L21,A,F1,QD,FP,;R4L22,A,F1,QD,FP,;R4L23,A,F1,QD,FP,;R4L24,A,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,LD,F1,QD,FP,;R8L12,A,LD,F1,QD,FP,;R8L13,A,LD,F1,QD,FP,;R8L14,A,LD,F1,QD,FP,;R8L15,A,LD,F1,QD,FP,;R8L16,A,F1,QD,FP,;R8L17,A,F1,QD,FP,;R8L18,A,F1,QD,FP,;R8L19,A,F1,QD,FP,;R8L20,A,F1,QD,FP,;R8L21,A,F1,QD,FP,;R8L22,A,F1,QD,FP,;R8L23,A,F1,QD,FP,;R8L24,A,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+			
+			// imaginary part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,D,LD,F1,QD,FP,;R2L19,A,D,LD,F1,QD,FP,;R2L20,A,D,LD,F1,QD,FP,;R2L21,A,D,LD,F1,QD,FP,;R2L22,A,D,LD,F1,QD,FP,;R2L23,A,D,LD,F1,QD,FP,;R2L24,A,D,LD,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,D,LD,F1,QD,FP,;R4L19,A,D,LD,F1,QD,FP,;R4L20,A,D,LD,F1,QD,FP,;R4L21,A,D,LD,F1,QD,FP,;R4L22,A,D,LD,F1,QD,FP,;R4L23,A,D,LD,F1,QD,FP,;R4L24,A,D,LD,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,D,LD,F1,QD,FP,;R8L19,A,D,LD,F1,QD,FP,;R8L20,A,D,LD,F1,QD,FP,;R8L21,A,D,LD,F1,QD,FP,;R8L22,A,D,LD,F1,QD,FP,;R8L23,A,D,LD,F1,QD,FP,;R8L24,A,LD,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
+			// z-part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,LD,F1,QD,FP,;R2L15,A,LD,F1,QD,FP,;R2L16,A,LD,F1,QD,FP,;R2L17,A,F1,QD,FP,;R2L18,A,F1,QD,FP,;R2L19,A,F1,QD,FP,;R2L20,A,F1,QD,FP,;R2L21,A,F1,QD,FP,;R2L22,A,F1,QD,FP,;R2L23,A,F1,QD,FP,;R2L24,A,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,LD,F1,QD,FP,;R4L15,A,LD,F1,QD,FP,;R4L16,A,LD,F1,QD,FP,;R4L17,A,F1,QD,FP,;R4L18,A,F1,QD,FP,;R4L19,A,F1,QD,FP,;R4L20,A,F1,QD,FP,;R4L21,A,F1,QD,FP,;R4L22,A,F1,QD,FP,;R4L23,A,F1,QD,FP,;R4L24,A,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,LD,F1,QD,FP,;R8L15,A,LD,F1,QD,FP,;R8L16,A,LD,F1,QD,FP,;R8L17,A,F1,QD,FP,;R8L18,A,F1,QD,FP,;R8L19,A,F1,QD,FP,;R8L20,A,F1,QD,FP,;R8L21,A,F1,QD,FP,;R8L22,A,F1,QD,FP,;R8L23,A,F1,QD,FP,;R8L24,A,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
+			break;
 		case FUNC_TRICZ3B:
 			sprintf(fn,"_L%02i_%s_tricz3b_%s_%s_%s",
 			REFINEMENTLEVEL,NNTYPSTR,
@@ -1269,10 +2165,31 @@ void setfunc(char* fn) {
 			TRICBstr(tmp4)
 			);
 			getBoundingBoxfA=getBoundingBoxfA_tricz3b;
-			bitpower=3;
 			CAUS
 			AAUS
 			BAUS
+
+			if (bitprecision) if (testA() <= 0) bitprecision=0;
+			if (bitprecision) if (testB() <= 0) bitprecision=0;
+			
+			// real part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,LD,F1,QD,FP,;R2L14,A,LD,F1,QD,FP,;R2L15,A,LD,F1,QD,FP,;R2L16,A,LD,F1,QD,FP,;R2L17,A,LD,F1,QD,FP,;R2L18,A,F1,QD,FP,;R2L19,A,F1,QD,FP,;R2L20,A,F1,QD,FP,;R2L21,A,F1,QD,FP,;R2L22,A,F1,QD,FP,;R2L23,A,F1,QD,FP,;R2L24,A,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,LD,F1,QD,FP,;R4L14,A,LD,F1,QD,FP,;R4L15,A,LD,F1,QD,FP,;R4L16,A,LD,F1,QD,FP,;R4L17,A,LD,F1,QD,FP,;R4L18,A,F1,QD,FP,;R4L19,A,F1,QD,FP,;R4L20,A,F1,QD,FP,;R4L21,A,F1,QD,FP,;R4L22,A,F1,QD,FP,;R4L23,A,F1,QD,FP,;R4L24,A,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,LD,F1,QD,FP,;R8L13,A,LD,F1,QD,FP,;R8L14,A,LD,F1,QD,FP,;R8L15,A,LD,F1,QD,FP,;R8L16,A,LD,F1,QD,FP,;R8L17,A,F1,QD,FP,;R8L18,A,F1,QD,FP,;R8L19,A,F1,QD,FP,;R8L20,A,F1,QD,FP,;R8L21,A,F1,QD,FP,;R8L22,A,F1,QD,FP,;R8L23,A,F1,QD,FP,;R8L24,A,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+			
+			// imaginary part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,LD,F1,QD,FP,;R2L19,A,LD,F1,QD,FP,;R2L20,A,LD,F1,QD,FP,;R2L21,A,F1,QD,FP,;R2L22,A,F1,QD,FP,;R2L23,A,F1,QD,FP,;R2L24,A,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,LD,F1,QD,FP,;R4L19,A,LD,F1,QD,FP,;R4L20,A,LD,F1,QD,FP,;R4L21,A,F1,QD,FP,;R4L22,A,F1,QD,FP,;R4L23,A,F1,QD,FP,;R4L24,A,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,LD,F1,QD,FP,;R8L19,A,LD,F1,QD,FP,;R8L20,A,LD,F1,QD,FP,;R8L21,A,F1,QD,FP,;R8L22,A,F1,QD,FP,;R8L23,A,F1,QD,FP,;R8L24,A,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
+			// z-part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,LD,F1,QD,FP,;R2L19,A,LD,F1,QD,FP,;R2L20,A,LD,F1,QD,FP,;R2L21,A,LD,F1,QD,FP,;R2L22,A,F1,QD,FP,;R2L23,A,F1,QD,FP,;R2L24,A,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,LD,F1,QD,FP,;R4L19,A,LD,F1,QD,FP,;R4L20,A,LD,F1,QD,FP,;R4L21,A,LD,F1,QD,FP,;R4L22,A,F1,QD,FP,;R4L23,A,F1,QD,FP,;R4L24,A,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,LD,F1,QD,FP,;R8L19,A,LD,F1,QD,FP,;R8L20,A,LD,F1,QD,FP,;R8L21,A,LD,F1,QD,FP,;R8L22,A,F1,QD,FP,;R8L23,A,F1,QD,FP,;R8L24,A,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
 			break;
 		case FUNC_TRICZ4B:
 			sprintf(fn,"_L%02i_%s_tricz4b_%s_%s_%s",
@@ -1282,10 +2199,31 @@ void setfunc(char* fn) {
 			TRICBstr(tmp4)
 			);
 			getBoundingBoxfA=getBoundingBoxfA_tricz4b;
-			bitpower=4;
 			CAUS
 			AAUS
 			BAUS
+			
+			if (bitprecision) if (testA() <= 0) bitprecision=0;
+			if (bitprecision) if (testB() <= 0) bitprecision=0;
+			
+			// real part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,LD,F1,QD,FP,;R2L13,A,LD,F1,QD,FP,;R2L14,A,LD,F1,QD,FP,;R2L15,A,LD,F1,QD,FP,;R2L16,A,F1,QD,FP,;R2L17,A,F1,QD,FP,;R2L18,A,F1,QD,FP,;R2L19,A,F1,QD,FP,;R2L20,A,F1,QD,FP,;R2L21,A,F1,QD,FP,;R2L22,A,F1,QD,FP,;R2L23,A,F1,QD,FP,;R2L24,A,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,LD,F1,QD,FP,;R4L12,A,LD,F1,QD,FP,;R4L13,A,LD,F1,QD,FP,;R4L14,A,LD,F1,QD,FP,;R4L15,A,LD,F1,QD,FP,;R4L16,A,F1,QD,FP,;R4L17,A,F1,QD,FP,;R4L18,A,F1,QD,FP,;R4L19,A,F1,QD,FP,;R4L20,A,F1,QD,FP,;R4L21,A,F1,QD,FP,;R4L22,A,F1,QD,FP,;R4L23,A,F1,QD,FP,;R4L24,A,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,LD,F1,QD,FP,;R8L11,A,LD,F1,QD,FP,;R8L12,A,LD,F1,QD,FP,;R8L13,A,LD,F1,QD,FP,;R8L14,A,LD,F1,QD,FP,;R8L15,A,F1,QD,FP,;R8L16,A,F1,QD,FP,;R8L17,A,F1,QD,FP,;R8L18,A,F1,QD,FP,;R8L19,A,F1,QD,FP,;R8L20,A,F1,QD,FP,;R8L21,A,F1,QD,FP,;R8L22,A,F1,QD,FP,;R8L23,A,F1,QD,FP,;R8L24,A,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+			
+			// imaginary part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,LD,F1,QD,FP,;R2L15,A,LD,F1,QD,FP,;R2L16,A,F1,QD,FP,;R2L17,A,F1,QD,FP,;R2L18,A,F1,QD,FP,;R2L19,A,F1,QD,FP,;R2L20,A,F1,QD,FP,;R2L21,A,F1,QD,FP,;R2L22,A,F1,QD,FP,;R2L23,A,F1,QD,FP,;R2L24,A,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,LD,F1,QD,FP,;R4L15,A,LD,F1,QD,FP,;R4L16,A,F1,QD,FP,;R4L17,A,F1,QD,FP,;R4L18,A,F1,QD,FP,;R4L19,A,F1,QD,FP,;R4L20,A,F1,QD,FP,;R4L21,A,F1,QD,FP,;R4L22,A,F1,QD,FP,;R4L23,A,F1,QD,FP,;R4L24,A,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,LD,F1,QD,FP,;R8L15,A,LD,F1,QD,FP,;R8L16,A,F1,QD,FP,;R8L17,A,F1,QD,FP,;R8L18,A,F1,QD,FP,;R8L19,A,F1,QD,FP,;R8L20,A,F1,QD,FP,;R8L21,A,F1,QD,FP,;R8L22,A,F1,QD,FP,;R8L23,A,F1,QD,FP,;R8L24,A,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
+			// z-part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,LD,F1,QD,FP,;R2L19,A,LD,F1,QD,FP,;R2L20,A,LD,F1,QD,FP,;R2L21,A,LD,F1,QD,FP,;R2L22,A,F1,QD,FP,;R2L23,A,F1,QD,FP,;R2L24,A,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,LD,F1,QD,FP,;R4L19,A,LD,F1,QD,FP,;R4L20,A,LD,F1,QD,FP,;R4L21,A,LD,F1,QD,FP,;R4L22,A,F1,QD,FP,;R4L23,A,F1,QD,FP,;R4L24,A,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,LD,F1,QD,FP,;R8L19,A,LD,F1,QD,FP,;R8L20,A,LD,F1,QD,FP,;R8L21,A,LD,F1,QD,FP,;R8L22,A,F1,QD,FP,;R8L23,A,F1,QD,FP,;R8L24,A,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
 			break;
 		case FUNC_BAIRD5:
 			sprintf(fn,"_L%02i_%s_baird5_%s_%s",
@@ -1294,9 +2232,29 @@ void setfunc(char* fn) {
 			TRICAstr(tmp3)
 			);
 			getBoundingBoxfA=getBoundingBoxfA_baird5;
-			bitpower=3;
 			CAUS
 			AAUS
+			
+			if (bitprecision) if (testA() <= 0) bitprecision=0;
+			
+			// real part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,LD,F1,QD,FP,;R2L19,A,LD,F1,QD,FP,;R2L20,A,LD,F1,QD,FP,;R2L21,A,F1,QD,FP,;R2L22,A,F1,QD,FP,;R2L23,A,F1,QD,FP,;R2L24,A,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,LD,F1,QD,FP,;R4L19,A,LD,F1,QD,FP,;R4L20,A,LD,F1,QD,FP,;R4L21,A,F1,QD,FP,;R4L22,A,F1,QD,FP,;R4L23,A,F1,QD,FP,;R4L24,A,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,LD,F1,QD,FP,;R8L19,A,LD,F1,QD,FP,;R8L20,A,LD,F1,QD,FP,;R8L21,A,F1,QD,FP,;R8L22,A,F1,QD,FP,;R8L23,A,F1,QD,FP,;R8L24,A,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+			
+			// imaginary part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,LD,F1,QD,FP,;R2L19,A,LD,F1,QD,FP,;R2L20,A,LD,F1,QD,FP,;R2L21,A,F1,QD,FP,;R2L22,A,F1,QD,FP,;R2L23,A,F1,QD,FP,;R2L24,A,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,LD,F1,QD,FP,;R4L19,A,LD,F1,QD,FP,;R4L20,A,LD,F1,QD,FP,;R4L21,A,F1,QD,FP,;R4L22,A,F1,QD,FP,;R4L23,A,F1,QD,FP,;R4L24,A,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,LD,F1,QD,FP,;R8L19,A,LD,F1,QD,FP,;R8L20,A,LD,F1,QD,FP,;R8L21,A,F1,QD,FP,;R8L22,A,F1,QD,FP,;R8L23,A,F1,QD,FP,;R8L24,A,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
+			// z-part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,LD,F1,QD,FP,;R2L19,A,LD,F1,QD,FP,;R2L20,A,LD,F1,QD,FP,;R2L21,A,LD,F1,QD,FP,;R2L22,A,F1,QD,FP,;R2L23,A,F1,QD,FP,;R2L24,A,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,LD,F1,QD,FP,;R4L19,A,LD,F1,QD,FP,;R4L20,A,LD,F1,QD,FP,;R4L21,A,LD,F1,QD,FP,;R4L22,A,F1,QD,FP,;R4L23,A,F1,QD,FP,;R4L24,A,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,LD,F1,QD,FP,;R8L19,A,LD,F1,QD,FP,;R8L20,A,LD,F1,QD,FP,;R8L21,A,LD,F1,QD,FP,;R8L22,A,F1,QD,FP,;R8L23,A,F1,QD,FP,;R8L24,A,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
 			break;
 		case FUNC_SMITH:
 			sprintf(fn,"_L%02i_%s_smith_%s",
@@ -1304,32 +2262,214 @@ void setfunc(char* fn) {
 			seedCstr(tmp2)
 			);
 			getBoundingBoxfA=getBoundingBoxfA_smith;
-			bitpower=5;
 			CAUS
+			
+			// real part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,D,LD,F1,QD,FP,;R2L19,A,D,LD,F1,QD,FP,;R2L20,A,D,LD,F1,QD,FP,;R2L21,A,D,LD,F1,QD,FP,;R2L22,A,D,LD,F1,QD,FP,;R2L23,A,D,LD,F1,QD,FP,;R2L24,A,D,LD,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,D,LD,F1,QD,FP,;R4L19,A,D,LD,F1,QD,FP,;R4L20,A,D,LD,F1,QD,FP,;R4L21,A,D,LD,F1,QD,FP,;R4L22,A,D,LD,F1,QD,FP,;R4L23,A,D,LD,F1,QD,FP,;R4L24,A,D,LD,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,D,LD,F1,QD,FP,;R8L19,A,D,LD,F1,QD,FP,;R8L20,A,D,LD,F1,QD,FP,;R8L21,A,D,LD,F1,QD,FP,;R8L22,A,D,LD,F1,QD,FP,;R8L23,A,D,LD,F1,QD,FP,;R8L24,A,D,LD,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+			
+			// imaginary part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,LD,F1,QD,FP,;R2L9,A,LD,F1,QD,FP,;R2L10,A,LD,F1,QD,FP,;R2L11,A,LD,F1,QD,FP,;R2L12,A,LD,F1,QD,FP,;R2L13,A,LD,F1,QD,FP,;R2L14,A,LD,F1,QD,FP,;R2L15,A,LD,F1,QD,FP,;R2L16,A,F1,QD,FP,;R2L17,A,F1,QD,FP,;R2L18,A,F1,QD,FP,;R2L19,A,F1,QD,FP,;R2L20,A,F1,QD,FP,;R2L21,A,F1,QD,FP,;R2L22,A,F1,QD,FP,;R2L23,A,F1,QD,FP,;R2L24,A,F1,QD,FP,;R4L8,A,LD,F1,QD,FP,;R4L9,A,LD,F1,QD,FP,;R4L10,A,LD,F1,QD,FP,;R4L11,A,LD,F1,QD,FP,;R4L12,A,LD,F1,QD,FP,;R4L13,A,LD,F1,QD,FP,;R4L14,A,LD,F1,QD,FP,;R4L15,A,LD,F1,QD,FP,;R4L16,A,F1,QD,FP,;R4L17,A,F1,QD,FP,;R4L18,A,F1,QD,FP,;R4L19,A,F1,QD,FP,;R4L20,A,F1,QD,FP,;R4L21,A,F1,QD,FP,;R4L22,A,F1,QD,FP,;R4L23,A,F1,QD,FP,;R4L24,A,F1,QD,FP,;R8L8,A,F1,QD,FP,;R8L9,A,F1,QD,FP,;R8L10,A,F1,QD,FP,;R8L11,A,F1,QD,FP,;R8L12,A,F1,QD,FP,;R8L13,A,F1,QD,FP,;R8L14,A,F1,QD,FP,;R8L15,A,F1,QD,FP,;R8L16,A,F1,QD,FP,;R8L17,A,F1,QD,FP,;R8L18,A,F1,QD,FP,;R8L19,A,F1,QD,FP,;R8L20,A,F1,QD,FP,;R8L21,A,F1,QD,FP,;R8L22,A,F1,QD,FP,;R8L23,A,F1,QD,FP,;R8L24,A,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
+			// z-part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,LD,F1,QD,FP,;R2L19,A,LD,F1,QD,FP,;R2L20,A,LD,F1,QD,FP,;R2L21,A,F1,QD,FP,;R2L22,A,F1,QD,FP,;R2L23,A,F1,QD,FP,;R2L24,A,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,LD,F1,QD,FP,;R4L19,A,LD,F1,QD,FP,;R4L20,A,LD,F1,QD,FP,;R4L21,A,F1,QD,FP,;R4L22,A,F1,QD,FP,;R4L23,A,F1,QD,FP,;R4L24,A,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,LD,F1,QD,FP,;R8L19,A,LD,F1,QD,FP,;R8L20,A,LD,F1,QD,FP,;R8L21,A,F1,QD,FP,;R8L22,A,F1,QD,FP,;R8L23,A,F1,QD,FP,;R8L24,A,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
+			break;
+		case FUNC_SH1:
+			sprintf(fn,"_L%02i_%s_sh1_%s",
+			REFINEMENTLEVEL,NNTYPSTR,
+			seedCstr(tmp2)
+			);
+			getBoundingBoxfA=getBoundingBoxfA_sh1;
+			CAUS
+
+			// real part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,D,LD,F1,QD,FP,;R2L19,A,D,LD,F1,QD,FP,;R2L20,A,D,LD,F1,QD,FP,;R2L21,A,D,LD,F1,QD,FP,;R2L22,A,D,LD,F1,QD,FP,;R2L23,A,D,LD,F1,QD,FP,;R2L24,A,D,LD,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,D,LD,F1,QD,FP,;R4L19,A,D,LD,F1,QD,FP,;R4L20,A,D,LD,F1,QD,FP,;R4L21,A,D,LD,F1,QD,FP,;R4L22,A,D,LD,F1,QD,FP,;R4L23,A,D,LD,F1,QD,FP,;R4L24,A,D,LD,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,D,LD,F1,QD,FP,;R8L19,A,D,LD,F1,QD,FP,;R8L20,A,D,LD,F1,QD,FP,;R8L21,A,D,LD,F1,QD,FP,;R8L22,A,D,LD,F1,QD,FP,;R8L23,A,D,LD,F1,QD,FP,;R8L24,A,D,LD,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+			
+			// imaginary part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,D,LD,F1,QD,FP,;R2L19,A,D,LD,F1,QD,FP,;R2L20,A,D,LD,F1,QD,FP,;R2L21,A,D,LD,F1,QD,FP,;R2L22,A,D,LD,F1,QD,FP,;R2L23,A,D,LD,F1,QD,FP,;R2L24,A,D,LD,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,D,LD,F1,QD,FP,;R4L19,A,D,LD,F1,QD,FP,;R4L20,A,D,LD,F1,QD,FP,;R4L21,A,D,LD,F1,QD,FP,;R4L22,A,D,LD,F1,QD,FP,;R4L23,A,D,LD,F1,QD,FP,;R4L24,A,D,LD,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,D,LD,F1,QD,FP,;R8L19,A,D,LD,F1,QD,FP,;R8L20,A,D,LD,F1,QD,FP,;R8L21,A,D,LD,F1,QD,FP,;R8L22,A,D,LD,F1,QD,FP,;R8L23,A,D,LD,F1,QD,FP,;R8L24,A,D,LD,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
+			// z-part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,D,LD,F1,QD,FP,;R2L19,A,D,LD,F1,QD,FP,;R2L20,A,D,LD,F1,QD,FP,;R2L21,A,D,LD,F1,QD,FP,;R2L22,A,D,LD,F1,QD,FP,;R2L23,A,D,LD,F1,QD,FP,;R2L24,A,D,LD,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,D,LD,F1,QD,FP,;R4L19,A,D,LD,F1,QD,FP,;R4L20,A,D,LD,F1,QD,FP,;R4L21,A,D,LD,F1,QD,FP,;R4L22,A,D,LD,F1,QD,FP,;R4L23,A,D,LD,F1,QD,FP,;R4L24,A,D,LD,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,D,LD,F1,QD,FP,;R8L19,A,D,LD,F1,QD,FP,;R8L20,A,D,LD,F1,QD,FP,;R8L21,A,D,LD,F1,QD,FP,;R8L22,A,D,LD,F1,QD,FP,;R8L23,A,D,LD,F1,QD,FP,;R8L24,A,D,LD,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
+			break;
+		case FUNC_SH2:
+			sprintf(fn,"_L%02i_%s_sh2_%s",
+			REFINEMENTLEVEL,NNTYPSTR,
+			seedCstr(tmp2)
+			);
+			getBoundingBoxfA=getBoundingBoxfA_sh2;
+			CAUS
+
+			// real part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,D,LD,F1,QD,FP,;R2L19,A,D,LD,F1,QD,FP,;R2L20,A,D,LD,F1,QD,FP,;R2L21,A,D,LD,F1,QD,FP,;R2L22,A,D,LD,F1,QD,FP,;R2L23,A,D,LD,F1,QD,FP,;R2L24,A,D,LD,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,D,LD,F1,QD,FP,;R4L19,A,D,LD,F1,QD,FP,;R4L20,A,D,LD,F1,QD,FP,;R4L21,A,D,LD,F1,QD,FP,;R4L22,A,D,LD,F1,QD,FP,;R4L23,A,D,LD,F1,QD,FP,;R4L24,A,D,LD,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,D,LD,F1,QD,FP,;R8L19,A,D,LD,F1,QD,FP,;R8L20,A,D,LD,F1,QD,FP,;R8L21,A,D,LD,F1,QD,FP,;R8L22,A,D,LD,F1,QD,FP,;R8L23,A,D,LD,F1,QD,FP,;R8L24,A,D,LD,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+			
+			// imaginary part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,LD,F1,QD,FP,;R2L19,A,LD,F1,QD,FP,;R2L20,A,LD,F1,QD,FP,;R2L21,A,LD,F1,QD,FP,;R2L22,A,F1,QD,FP,;R2L23,A,F1,QD,FP,;R2L24,A,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,LD,F1,QD,FP,;R4L19,A,LD,F1,QD,FP,;R4L20,A,LD,F1,QD,FP,;R4L21,A,LD,F1,QD,FP,;R4L22,A,F1,QD,FP,;R4L23,A,F1,QD,FP,;R4L24,A,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,LD,F1,QD,FP,;R8L19,A,LD,F1,QD,FP,;R8L20,A,LD,F1,QD,FP,;R8L21,A,LD,F1,QD,FP,;R8L22,A,F1,QD,FP,;R8L23,A,F1,QD,FP,;R8L24,A,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
+			// z-part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,D,LD,F1,QD,FP,;R2L19,A,LD,F1,QD,FP,;R2L20,A,LD,F1,QD,FP,;R2L21,A,LD,F1,QD,FP,;R2L22,A,F1,QD,FP,;R2L23,A,F1,QD,FP,;R2L24,A,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,D,LD,F1,QD,FP,;R4L19,A,LD,F1,QD,FP,;R4L20,A,LD,F1,QD,FP,;R4L21,A,LD,F1,QD,FP,;R4L22,A,F1,QD,FP,;R4L23,A,F1,QD,FP,;R4L24,A,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,D,LD,F1,QD,FP,;R8L19,A,LD,F1,QD,FP,;R8L20,A,LD,F1,QD,FP,;R8L21,A,LD,F1,QD,FP,;R8L22,A,F1,QD,FP,;R8L23,A,F1,QD,FP,;R8L24,A,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
+			break;
+		case FUNC_SH17:
+			sprintf(fn,"_L%02i_%s_sh17_%s",
+			REFINEMENTLEVEL,NNTYPSTR,
+			seedCstr(tmp2)
+			);
+			getBoundingBoxfA=getBoundingBoxfA_sh17;
+			CAUS
+
+			// real part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,LD,F1,QD,FP,;R2L19,A,LD,F1,QD,FP,;R2L20,A,LD,F1,QD,FP,;R2L21,A,F1,QD,FP,;R2L22,A,F1,QD,FP,;R2L23,A,F1,QD,FP,;R2L24,A,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,LD,F1,QD,FP,;R4L19,A,LD,F1,QD,FP,;R4L20,A,LD,F1,QD,FP,;R4L21,A,F1,QD,FP,;R4L22,A,F1,QD,FP,;R4L23,A,F1,QD,FP,;R4L24,A,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,LD,F1,QD,FP,;R8L19,A,LD,F1,QD,FP,;R8L20,A,LD,F1,QD,FP,;R8L21,A,F1,QD,FP,;R8L22,A,F1,QD,FP,;R8L23,A,F1,QD,FP,;R8L24,A,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+			
+			// imaginary part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,LD,F1,QD,FP,;R2L9,A,LD,F1,QD,FP,;R2L10,A,LD,F1,QD,FP,;R2L11,A,LD,F1,QD,FP,;R2L12,A,LD,F1,QD,FP,;R2L13,A,LD,F1,QD,FP,;R2L14,A,LD,F1,QD,FP,;R2L15,A,LD,F1,QD,FP,;R2L16,A,F1,QD,FP,;R2L17,A,F1,QD,FP,;R2L18,A,F1,QD,FP,;R2L19,A,F1,QD,FP,;R2L20,A,F1,QD,FP,;R2L21,A,F1,QD,FP,;R2L22,A,F1,QD,FP,;R2L23,A,F1,QD,FP,;R2L24,A,F1,QD,FP,;R4L8,A,LD,F1,QD,FP,;R4L9,A,LD,F1,QD,FP,;R4L10,A,LD,F1,QD,FP,;R4L11,A,LD,F1,QD,FP,;R4L12,A,LD,F1,QD,FP,;R4L13,A,LD,F1,QD,FP,;R4L14,A,LD,F1,QD,FP,;R4L15,A,LD,F1,QD,FP,;R4L16,A,F1,QD,FP,;R4L17,A,F1,QD,FP,;R4L18,A,F1,QD,FP,;R4L19,A,F1,QD,FP,;R4L20,A,F1,QD,FP,;R4L21,A,F1,QD,FP,;R4L22,A,F1,QD,FP,;R4L23,A,F1,QD,FP,;R4L24,A,F1,QD,FP,;R8L8,A,F1,QD,FP,;R8L9,A,F1,QD,FP,;R8L10,A,F1,QD,FP,;R8L11,A,F1,QD,FP,;R8L12,A,F1,QD,FP,;R8L13,A,F1,QD,FP,;R8L14,A,F1,QD,FP,;R8L15,A,F1,QD,FP,;R8L16,A,F1,QD,FP,;R8L17,A,F1,QD,FP,;R8L18,A,F1,QD,FP,;R8L19,A,F1,QD,FP,;R8L20,A,F1,QD,FP,;R8L21,A,F1,QD,FP,;R8L22,A,F1,QD,FP,;R8L23,A,F1,QD,FP,;R8L24,A,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
+			// z-part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,D,LD,F1,QD,FP,;R2L19,A,D,LD,F1,QD,FP,;R2L20,A,D,LD,F1,QD,FP,;R2L21,A,D,LD,F1,QD,FP,;R2L22,A,D,LD,F1,QD,FP,;R2L23,A,D,LD,F1,QD,FP,;R2L24,A,D,LD,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,D,LD,F1,QD,FP,;R4L19,A,D,LD,F1,QD,FP,;R4L20,A,D,LD,F1,QD,FP,;R4L21,A,D,LD,F1,QD,FP,;R4L22,A,D,LD,F1,QD,FP,;R4L23,A,D,LD,F1,QD,FP,;R4L24,A,D,LD,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,D,LD,F1,QD,FP,;R8L19,A,D,LD,F1,QD,FP,;R8L20,A,D,LD,F1,QD,FP,;R8L21,A,D,LD,F1,QD,FP,;R8L22,A,D,LD,F1,QD,FP,;R8L23,A,D,LD,F1,QD,FP,;R8L24,A,D,LD,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
+			break;
+		case FUNC_SH43:
+			sprintf(fn,"_L%02i_%s_sh43_%s",
+			REFINEMENTLEVEL,NNTYPSTR,
+			seedCstr(tmp2)
+			);
+			getBoundingBoxfA=getBoundingBoxfA_sh43;
+			CAUS
+
+			// real part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,LD,F1,QD,FP,;R2L15,A,LD,F1,QD,FP,;R2L16,A,LD,F1,QD,FP,;R2L17,A,F1,QD,FP,;R2L18,A,F1,QD,FP,;R2L19,A,F1,QD,FP,;R2L20,A,F1,QD,FP,;R2L21,A,F1,QD,FP,;R2L22,A,F1,QD,FP,;R2L23,A,F1,QD,FP,;R2L24,A,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,LD,F1,QD,FP,;R4L15,A,LD,F1,QD,FP,;R4L16,A,LD,F1,QD,FP,;R4L17,A,F1,QD,FP,;R4L18,A,F1,QD,FP,;R4L19,A,F1,QD,FP,;R4L20,A,F1,QD,FP,;R4L21,A,F1,QD,FP,;R4L22,A,F1,QD,FP,;R4L23,A,F1,QD,FP,;R4L24,A,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,LD,F1,QD,FP,;R8L15,A,LD,F1,QD,FP,;R8L16,A,LD,F1,QD,FP,;R8L17,A,F1,QD,FP,;R8L18,A,F1,QD,FP,;R8L19,A,F1,QD,FP,;R8L20,A,F1,QD,FP,;R8L21,A,F1,QD,FP,;R8L22,A,F1,QD,FP,;R8L23,A,F1,QD,FP,;R8L24,A,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+			
+			// imaginary part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,D,LD,F1,QD,FP,;R2L19,A,D,LD,F1,QD,FP,;R2L20,A,D,LD,F1,QD,FP,;R2L21,A,D,LD,F1,QD,FP,;R2L22,A,D,LD,F1,QD,FP,;R2L23,A,D,LD,F1,QD,FP,;R2L24,A,D,LD,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,D,LD,F1,QD,FP,;R4L19,A,D,LD,F1,QD,FP,;R4L20,A,D,LD,F1,QD,FP,;R4L21,A,D,LD,F1,QD,FP,;R4L22,A,D,LD,F1,QD,FP,;R4L23,A,D,LD,F1,QD,FP,;R4L24,A,D,LD,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,D,LD,F1,QD,FP,;R8L19,A,D,LD,F1,QD,FP,;R8L20,A,D,LD,F1,QD,FP,;R8L21,A,D,LD,F1,QD,FP,;R8L22,A,D,LD,F1,QD,FP,;R8L23,A,D,LD,F1,QD,FP,;R8L24,A,D,LD,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
+			// z-part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,LD,F1,QD,FP,;R2L19,A,LD,F1,QD,FP,;R2L20,A,LD,F1,QD,FP,;R2L21,A,F1,QD,FP,;R2L22,A,F1,QD,FP,;R2L23,A,F1,QD,FP,;R2L24,A,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,LD,F1,QD,FP,;R4L19,A,LD,F1,QD,FP,;R4L20,A,LD,F1,QD,FP,;R4L21,A,F1,QD,FP,;R4L22,A,F1,QD,FP,;R4L23,A,F1,QD,FP,;R4L24,A,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,LD,F1,QD,FP,;R8L19,A,LD,F1,QD,FP,;R8L20,A,LD,F1,QD,FP,;R8L21,A,F1,QD,FP,;R8L22,A,F1,QD,FP,;R8L23,A,F1,QD,FP,;R8L24,A,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
 			break;
 		case FUNC_BAIRD:
 			sprintf(fn,"_L%02i_%s_baird_%s",
 			REFINEMENTLEVEL,NNTYPSTR,seedCstr(tmp2));
 			getBoundingBoxfA=getBoundingBoxfA_baird;
-			bitpower=2;
 			CAUS
+
+			// real part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,D,LD,F1,QD,FP,;R2L19,A,D,LD,F1,QD,FP,;R2L20,A,D,LD,F1,QD,FP,;R2L21,A,D,LD,F1,QD,FP,;R2L22,A,D,LD,F1,QD,FP,;R2L23,A,D,LD,F1,QD,FP,;R2L24,A,D,LD,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,D,LD,F1,QD,FP,;R4L19,A,D,LD,F1,QD,FP,;R4L20,A,D,LD,F1,QD,FP,;R4L21,A,D,LD,F1,QD,FP,;R4L22,A,D,LD,F1,QD,FP,;R4L23,A,D,LD,F1,QD,FP,;R4L24,A,D,LD,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,D,LD,F1,QD,FP,;R8L19,A,D,LD,F1,QD,FP,;R8L20,A,D,LD,F1,QD,FP,;R8L21,A,D,LD,F1,QD,FP,;R8L22,A,D,LD,F1,QD,FP,;R8L23,A,D,LD,F1,QD,FP,;R8L24,A,D,LD,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+			
+			// imaginary part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,D,LD,F1,QD,FP,;R2L19,A,D,LD,F1,QD,FP,;R2L20,A,D,LD,F1,QD,FP,;R2L21,A,D,LD,F1,QD,FP,;R2L22,A,D,LD,F1,QD,FP,;R2L23,A,D,LD,F1,QD,FP,;R2L24,A,D,LD,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,D,LD,F1,QD,FP,;R4L19,A,D,LD,F1,QD,FP,;R4L20,A,D,LD,F1,QD,FP,;R4L21,A,D,LD,F1,QD,FP,;R4L22,A,D,LD,F1,QD,FP,;R4L23,A,D,LD,F1,QD,FP,;R4L24,A,D,LD,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,D,LD,F1,QD,FP,;R8L19,A,D,LD,F1,QD,FP,;R8L20,A,D,LD,F1,QD,FP,;R8L21,A,D,LD,F1,QD,FP,;R8L22,A,D,LD,F1,QD,FP,;R8L23,A,D,LD,F1,QD,FP,;R8L24,A,D,LD,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
+			// z-part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,D,LD,F1,QD,FP,;R2L19,A,D,LD,F1,QD,FP,;R2L20,A,D,LD,F1,QD,FP,;R2L21,A,D,LD,F1,QD,FP,;R2L22,A,D,LD,F1,QD,FP,;R2L23,A,D,LD,F1,QD,FP,;R2L24,A,D,LD,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,D,LD,F1,QD,FP,;R4L19,A,D,LD,F1,QD,FP,;R4L20,A,D,LD,F1,QD,FP,;R4L21,A,D,LD,F1,QD,FP,;R4L22,A,D,LD,F1,QD,FP,;R4L23,A,D,LD,F1,QD,FP,;R4L24,A,D,LD,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,D,LD,F1,QD,FP,;R8L19,A,D,LD,F1,QD,FP,;R8L20,A,D,LD,F1,QD,FP,;R8L21,A,D,LD,F1,QD,FP,;R8L22,A,D,LD,F1,QD,FP,;R8L23,A,D,LD,F1,QD,FP,;R8L24,A,D,LD,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
 			break;
 		case FUNC_BRISTOR:
 			sprintf(fn,"_L%02i_%s_bristor_%s",
 			REFINEMENTLEVEL,NNTYPSTR,seedCstr(tmp2));
 			getBoundingBoxfA=getBoundingBoxfA_bristor;
-			bitpower=2;
-			break;
 			CAUS
+
+			// real part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,D,LD,F1,QD,FP,;R2L19,A,D,LD,F1,QD,FP,;R2L20,A,D,LD,F1,QD,FP,;R2L21,A,D,LD,F1,QD,FP,;R2L22,A,D,LD,F1,QD,FP,;R2L23,A,D,LD,F1,QD,FP,;R2L24,A,D,LD,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,D,LD,F1,QD,FP,;R4L19,A,D,LD,F1,QD,FP,;R4L20,A,D,LD,F1,QD,FP,;R4L21,A,D,LD,F1,QD,FP,;R4L22,A,D,LD,F1,QD,FP,;R4L23,A,D,LD,F1,QD,FP,;R4L24,A,D,LD,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,D,LD,F1,QD,FP,;R8L19,A,D,LD,F1,QD,FP,;R8L20,A,D,LD,F1,QD,FP,;R8L21,A,D,LD,F1,QD,FP,;R8L22,A,D,LD,F1,QD,FP,;R8L23,A,D,LD,F1,QD,FP,;R8L24,A,D,LD,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+			
+			// imaginary part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,D,LD,F1,QD,FP,;R2L19,A,D,LD,F1,QD,FP,;R2L20,A,D,LD,F1,QD,FP,;R2L21,A,D,LD,F1,QD,FP,;R2L22,A,D,LD,F1,QD,FP,;R2L23,A,D,LD,F1,QD,FP,;R2L24,A,D,LD,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,D,LD,F1,QD,FP,;R4L19,A,D,LD,F1,QD,FP,;R4L20,A,D,LD,F1,QD,FP,;R4L21,A,D,LD,F1,QD,FP,;R4L22,A,D,LD,F1,QD,FP,;R4L23,A,D,LD,F1,QD,FP,;R4L24,A,D,LD,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,D,LD,F1,QD,FP,;R8L19,A,D,LD,F1,QD,FP,;R8L20,A,D,LD,F1,QD,FP,;R8L21,A,D,LD,F1,QD,FP,;R8L22,A,D,LD,F1,QD,FP,;R8L23,A,D,LD,F1,QD,FP,;R8L24,A,D,LD,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
+			// z-part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,D,LD,F1,QD,FP,;R2L19,A,D,LD,F1,QD,FP,;R2L20,A,D,LD,F1,QD,FP,;R2L21,A,D,LD,F1,QD,FP,;R2L22,A,D,LD,F1,QD,FP,;R2L23,A,D,LD,F1,QD,FP,;R2L24,A,D,LD,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,D,LD,F1,QD,FP,;R4L19,A,D,LD,F1,QD,FP,;R4L20,A,D,LD,F1,QD,FP,;R4L21,A,D,LD,F1,QD,FP,;R4L22,A,D,LD,F1,QD,FP,;R4L23,A,D,LD,F1,QD,FP,;R4L24,A,D,LD,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,D,LD,F1,QD,FP,;R8L19,A,D,LD,F1,QD,FP,;R8L20,A,D,LD,F1,QD,FP,;R8L21,A,D,LD,F1,QD,FP,;R8L22,A,D,LD,F1,QD,FP,;R8L23,A,D,LD,F1,QD,FP,;R8L24,A,D,LD,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
+			break;
 		default:
 			_FUNC=FUNC_MAKIN;
 			sprintf(fn,"_L%02i_%s_makin_%s",
 			REFINEMENTLEVEL,NNTYPSTR,seedCstr(tmp2));
 			getBoundingBoxfA=getBoundingBoxfA_makin;
-			bitpower=2;
 			CAUS
+			
+			// real part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,D,LD,F1,QD,FP,;R2L19,A,D,LD,F1,QD,FP,;R2L20,A,D,LD,F1,QD,FP,;R2L21,A,D,LD,F1,QD,FP,;R2L22,A,D,LD,F1,QD,FP,;R2L23,A,D,LD,F1,QD,FP,;R2L24,A,D,LD,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,D,LD,F1,QD,FP,;R4L19,A,D,LD,F1,QD,FP,;R4L20,A,D,LD,F1,QD,FP,;R4L21,A,D,LD,F1,QD,FP,;R4L22,A,D,LD,F1,QD,FP,;R4L23,A,D,LD,F1,QD,FP,;R4L24,A,D,LD,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,D,LD,F1,QD,FP,;R8L19,A,D,LD,F1,QD,FP,;R8L20,A,D,LD,F1,QD,FP,;R8L21,A,D,LD,F1,QD,FP,;R8L22,A,D,LD,F1,QD,FP,;R8L23,A,D,LD,F1,QD,FP,;R8L24,A,D,LD,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+			
+			// imaginary part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,D,LD,F1,QD,FP,;R2L19,A,D,LD,F1,QD,FP,;R2L20,A,D,LD,F1,QD,FP,;R2L21,A,D,LD,F1,QD,FP,;R2L22,A,D,LD,F1,QD,FP,;R2L23,A,D,LD,F1,QD,FP,;R2L24,A,D,LD,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,D,LD,F1,QD,FP,;R4L19,A,D,LD,F1,QD,FP,;R4L20,A,D,LD,F1,QD,FP,;R4L21,A,D,LD,F1,QD,FP,;R4L22,A,D,LD,F1,QD,FP,;R4L23,A,D,LD,F1,QD,FP,;R4L24,A,D,LD,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,D,LD,F1,QD,FP,;R8L19,A,D,LD,F1,QD,FP,;R8L20,A,D,LD,F1,QD,FP,;R8L21,A,D,LD,F1,QD,FP,;R8L22,A,D,LD,F1,QD,FP,;R8L23,A,D,LD,F1,QD,FP,;R8L24,A,D,LD,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+
+			// z-part
+			if (bitprecision) if (bitsSufficient(
+				";R2L8,A,D,LD,F1,QD,FP,;R2L9,A,D,LD,F1,QD,FP,;R2L10,A,D,LD,F1,QD,FP,;R2L11,A,D,LD,F1,QD,FP,;R2L12,A,D,LD,F1,QD,FP,;R2L13,A,D,LD,F1,QD,FP,;R2L14,A,D,LD,F1,QD,FP,;R2L15,A,D,LD,F1,QD,FP,;R2L16,A,D,LD,F1,QD,FP,;R2L17,A,D,LD,F1,QD,FP,;R2L18,A,D,LD,F1,QD,FP,;R2L19,A,D,LD,F1,QD,FP,;R2L20,A,D,LD,F1,QD,FP,;R2L21,A,D,LD,F1,QD,FP,;R2L22,A,D,LD,F1,QD,FP,;R2L23,A,D,LD,F1,QD,FP,;R2L24,A,D,LD,F1,QD,FP,;R4L8,A,D,LD,F1,QD,FP,;R4L9,A,D,LD,F1,QD,FP,;R4L10,A,D,LD,F1,QD,FP,;R4L11,A,D,LD,F1,QD,FP,;R4L12,A,D,LD,F1,QD,FP,;R4L13,A,D,LD,F1,QD,FP,;R4L14,A,D,LD,F1,QD,FP,;R4L15,A,D,LD,F1,QD,FP,;R4L16,A,D,LD,F1,QD,FP,;R4L17,A,D,LD,F1,QD,FP,;R4L18,A,D,LD,F1,QD,FP,;R4L19,A,D,LD,F1,QD,FP,;R4L20,A,D,LD,F1,QD,FP,;R4L21,A,D,LD,F1,QD,FP,;R4L22,A,D,LD,F1,QD,FP,;R4L23,A,D,LD,F1,QD,FP,;R4L24,A,D,LD,F1,QD,FP,;R8L8,A,D,LD,F1,QD,FP,;R8L9,A,D,LD,F1,QD,FP,;R8L10,A,D,LD,F1,QD,FP,;R8L11,A,D,LD,F1,QD,FP,;R8L12,A,D,LD,F1,QD,FP,;R8L13,A,D,LD,F1,QD,FP,;R8L14,A,D,LD,F1,QD,FP,;R8L15,A,D,LD,F1,QD,FP,;R8L16,A,D,LD,F1,QD,FP,;R8L17,A,D,LD,F1,QD,FP,;R8L18,A,D,LD,F1,QD,FP,;R8L19,A,D,LD,F1,QD,FP,;R8L20,A,D,LD,F1,QD,FP,;R8L21,A,D,LD,F1,QD,FP,;R8L22,A,D,LD,F1,QD,FP,;R8L23,A,D,LD,F1,QD,FP,;R8L24,A,D,LD,F1,QD,FP,;"
+				,RANGEINT,REFINEMENTLEVEL,NTS
+			) <= 0) bitprecision=0;
+			
 			break;
 	}
+	
+	return bitprecision;
 }
 
 // detect periodic basins
@@ -1566,6 +2706,7 @@ void periodicity(void) {
 					}
 				
 					ScreenCube scr;
+					// bbxfA is completely in RANGE0..RANGE1
 					scr.x0=scrcoord0(bbxfA.x0);
 					scr.x1=scrcoord0(bbxfA.x1);
 					scr.y0=scrcoord0(bbxfA.y0);
@@ -1701,77 +2842,6 @@ void periodicity(void) {
 	delete[] allcycles;
 }
 
-// datatype sufficient mantissa precision
-void bitTest(void) {
-	if (bitpower < 0) {
-		LOGMSG("Implementation error: Exponent missing.\n");
-		exit(99);
-	}
-
-	SpaceCube A,bbxfA;
-
-	double d=0.0;
-	
-	#define GROESSER(DD) \
-	{\
-		double dwert=fabs(DD);\
-		if (dwert > d2) d2=dwert;\
-	}
-	
-	#define MAXVALUE(AA,BB,CC,DD,EE,FF) \
-	{\
-		A.x0=AA;\
-		A.x1=BB;\
-		A.y0=CC;\
-		A.y1=DD;\
-		A.z0=EE;\
-		A.z1=FF;\
-		getBoundingBoxfA(A,bbxfA);\
-		double d2=0.0;\
-		GROESSER(bbxfA.x0)\
-		GROESSER(bbxfA.x1)\
-		GROESSER(bbxfA.y0)\
-		GROESSER(bbxfA.y1)\
-		GROESSER(bbxfA.z0)\
-		GROESSER(bbxfA.z1)\
-		if (d2 > d) d=d2;\
-	}
-
-	// Octant 1-8
-	int32_t z0,z1,y0,y1,x0,x1;
-	for(int z=0;z<2;z++) {
-		if (z==0) { z0=RANGE0; z1=0; }
-		else if (z==0) { z0=0; z1=RANGE1-1; }
-		for(int y=0;y<2;y++) {
-			if (y==0) { y0=RANGE0; y1=0; }
-			else if (y==0) { y0=0; y1=RANGE1-1; }
-			for(int x=0;x<2;x++) {
-				if (x==0) { x0=RANGE0; x1=0; }
-				else if (x==0) { x0=0; x1=RANGE1-1; }
-				
-				MAXVALUE(x0,x1,y0,y1,z0,z1);
-			}
-		}
-	}
-	
-	d=ceil(d);
-	
-	int bitsd=(int)ceil(log(d)/log(2.0));
-	double sk=(RANGE1-RANGE0); sk /= SCREENWIDTH;
-	int bitsnachkomma=(int)ceil(fabs(log(sk)/log(2.0)));
-	int bitsused=bitsd + bitpower*bitsnachkomma;
-	LOGMSG("mantissa precision ");
-	if (bitsused < (_BITSNTYP-1)) {
-		LOGMSG3("sufficient (%i needed, %i provided) ",
-			bitsused,_BITSNTYP);
-	} else {
-		LOGMSG3("NOT SUFFICIENT (buffer 2 Bit) (%i needed, %i provided) ",
-			bitsused,_BITSNTYP);
-	}
-	
-	LOGMSG2("maximum's decimal part %.0lf\n",d);
-}
-
 // memory manager for DBYTE-Array
 ArrayMgrDByte::~ArrayMgrDByte() {
 	for(int32_t i=0;i<countptr;i++) {
@@ -1824,6 +2894,7 @@ Coord* ArrayMgrCoord::getMem(const int32_t aanz) {
 			exit(99);
 		}
 		ptr[countptr]=current=new Coord[allocateHowMany];
+		printf("x");
 		countptr++;
 		freeFromIdx=0;
 		if (!current) {
@@ -2066,17 +3137,12 @@ void getRGBColor(const int32_t cubecol,RGB& ff) {
 void Screen::slide(void) {
 	double len=sqrt(3)*SCREENWIDTH;
 	int32_t schritte=2*(int)len;
-	int32_t MAXSCR=(int)ceil(1.2*len);
 	
 	int32_t maxanzschritte=2*(int)len;
 	schritte=maxanzschritte;
 	int32_t intersectidx0=-1,intersectidx1=-1; // invers, d.h. je kleiner Index, desto näher an Cube
-	int32_t erster=1;
 	const int32_t XLEN=lenx;
 	const int32_t YLEN=leny;
-	
-	const int32_t NOCH0=64;
-	int32_t noch=NOCH0;
 	
 	for(int32_t y=0;y<YLEN;y++) {
 		for(int32_t x=0;x<XLEN;x++) {
@@ -2104,11 +3170,6 @@ void Screen::slide(void) {
 	// jumping forth and back to find the world cube in larger steps
 	int32_t sprung=(int32_t)floor(0.9*mina);
 	
-	int32_t x0=0,x1=XLEN-1,y0=0,y1=YLEN-1;
-	int32_t ersterPunkt=1;
-	int32_t ersterSchritt=schritte;
-	int32_t schrittErsterTreffer=-1;
-	
 	const int32_t SPRUNGSCHRITT=8;
 	const int32_t ZURUECKSCHRITTE=64;
 	
@@ -2117,9 +3178,9 @@ void Screen::slide(void) {
 	
 	#define WITHIN(XX,YY,ZZ) \
 	(\
-		(XX >= 0) && (XX < SCREENWIDTH) &&\
-		(YY >= 0) && (YY < SCREENWIDTH) &&\
-		(ZZ >= 0) && (ZZ < SCREENWIDTH)\
+		( (XX) >= 0) && ( (XX) < SCREENWIDTH) &&\
+		( (YY) >= 0) && ( (YY) < SCREENWIDTH) &&\
+		( (ZZ) >= 0) && ( (ZZ) < SCREENWIDTH)\
 	)
 	
 	#define WITHINRGB(XX,YY,ZZ,FF,DRIN) \
@@ -2197,89 +3258,148 @@ void Screen::slide(void) {
 
 	schritte -= sprung; // eigentlich egal, wenn nix mehr kommt, hoert er eh auf)
 	
-	while (schritte>0) {
-		
+	// which screen pixels do never intersect with the world cube
+	// sets those directly ro RGB black
+	
+	int schritte0=schritte;
+	for(int32_t y=0;y<YLEN;y++) {
+		for(int32_t x=0;x<XLEN;x++) {
+			// from coordsY[y][x] in direction vecotr
+			// is there an interval [a1..a2] where
+			// a element of [a1..a2]: Q=P+a*vector is
+			// in the world cube: 0 <= Q.x < boxlenx
+			// 0 <= Q.y < boxleny AND 0 <= Q.z < boxlenz
+			// calculate x,y,z indivually: a-region
+			// intersect all => empty => never
+			
+			double a0=0.0,a1=(2*schritte);
+			// positive direction: new a0 >= -Px/Vx
+			// negative direction: new a1 <= -Px/Vx
+			// direction 0: no change
+			
+			#define INTERSECT(KK,VV,LL,RR) \
+			{\
+				if (VV > 1E-10) {\
+					double newa0=( (LL)-(KK) ) / (VV);\
+					if (newa0 > a0) a0=newa0;\
+					double newa1=( (RR)-(KK) ) / (VV);\
+					if (newa1 < a1) a1=newa1;\
+				} else if (VV < -1E-10) {\
+					double newa0=( (RR) - (KK) ) / (VV);\
+					if (newa0 > a0) a0=newa0;\
+					double newa1=( (LL) - (KK) ) / (VV);\
+					if (newa1 < a1) a1=newa1;\
+				} \
+			}
+			
+			INTERSECT(coordsY[y][x].x,vektor.x,data->encx0,data->encx1)
+			INTERSECT(coordsY[y][x].y,vektor.y,data->ency0,data->ency1)
+			INTERSECT(coordsY[y][x].z,vektor.z,data->encz0,data->encz1)
+			
+			if (a1 < a0) {
+				// no intersection
+				coordsY[y][x].intersectsWithVisibleObjectAtStep=schritte;
+				coordsY[y][x].R=0;
+				coordsY[y][x].G=0;
+				coordsY[y][x].B=0;
+			} else {
+				coordsY[y][x].intersectsWithVisibleObjectAtStep=-1;
+
+				coordsY[y][x].schrittgross=schritte0-(int)floor(a0)+16;
+				if (coordsY[y][x].schrittgross>=schritte) coordsY[y][x].schrittgross=schritte-1;
+				coordsY[y][x].schrittklein=schritte0-(int)ceil(a1)-16;
+				if (coordsY[y][x].schrittklein<0) coordsY[y][x].schrittklein=0;
+			}
+			
+		} // x
+	} // y
+	
+	int32_t fx0=XLEN,fx1=0,fy0=YLEN,fy1=0;
+	
+	for(int y=0;y<YLEN;y++) {
+		for(int x=0;x<XLEN;x++) {
+			if (coordsY[y][x].intersectsWithVisibleObjectAtStep < 0) {
+				if (x < fx0) fx0=x;
+				if (x > fx1) fx1=x;
+				if (y < fy0) fy0=y;
+				if (y > fy1) fy1=y;
+			} 
+		}
+	}
+	
+	int32_t NOCH0=(fy1-fy0) >> 4;
+	int32_t noch=NOCH0;
+	intersectidx0=0;
+	intersectidx1=2*schritte;
+	
+	int c0=clock();
+
+	for(int32_t y=fy0;y<=fy1;y++) {
 		if ( (noch--)== 0) {
-			printf("%i ",schritte);
+			printf("%i ",fy1-y);
 			noch=NOCH0;
 		}
-		schritte--;
-		int32_t scrschneidet=0;
-		
-		for(int32_t y=y0;y<=y1;y++) {
-			for(int32_t x=x0;x<=x1;x++) {
-				int32_t cubecol;
+		for(int32_t x=fx0;x<=fx1;x++) {
+			int32_t cubecol;
 				
-				if (
-					(coordsY[y][x].intersectsWithVisibleObjectAtStep<0)
-				) { 
-					int32_t drin=0;
-					WITHINRGB(
-						coordsY[y][x].x,coordsY[y][x].y,coordsY[y][x].z,
-						cubecol,
-						drin
-					);
-					
-					if (drin>0) {
-						scrschneidet=1;
-						x0=maximumI(x0,x-MAXSCR);
-						x1=minimumI(x1,x+MAXSCR);
-						y0=maximumI(y0,y-MAXSCR);
-						y1=minimumI(y1,y+MAXSCR);
-						if (ersterPunkt>0) {
-							schrittErsterTreffer=schritte;
-							ersterPunkt=0;						
-						}
-						
-						if (
-							(cubecol==CC_WHITE) ||
+			if (coordsY[y][x].intersectsWithVisibleObjectAtStep>0) continue;
+				
+			for(int sloop=schritte0;sloop>=coordsY[y][x].schrittklein;sloop--) {
+				if (sloop > coordsY[y][x].schrittgross) {
+					// adding outside is because of rounding differences different#
+					// to adding here repeatedly
+					coordsY[y][x] += vektor;
+					continue;
+				}
+				int32_t drin=0;
+				WITHINRGB(
+					coordsY[y][x].x,
+					coordsY[y][x].y,
+					coordsY[y][x].z,
+					cubecol,
+					drin
+				);
+				
+				if (drin>0) {
+					if (
+						(cubecol==CC_WHITE) ||
+						(
 							(
-								(
-									(cubecol==CC_GRAY) ||
-									(cubecol==CC_GRAYPOTW)
-								) &&
-								(GRAY_IS_TRANSPARENT>0)
-							)
-						) {
-							coordsY[y][x] += vektor;
-						} else {
-							if (intersectidx0<0) intersectidx0=schritte;
-							intersectidx1=schritte;
-							
-							coordsY[y][x].intersectsWithVisibleObjectAtStep=schritte;
-							
-							RGB ff;
-							getRGBColor(cubecol,ff);
-							coordsY[y][x].R=ff.R;
-							coordsY[y][x].G=ff.G;
-							coordsY[y][x].B=ff.B;
-						}
-					} else {
-						// move screen point
+								(cubecol==CC_GRAY) ||
+								(cubecol==CC_GRAYPOTW)
+							) &&
+							(GRAY_IS_TRANSPARENT>0)
+						)
+					) {
 						coordsY[y][x] += vektor;
+					} else {
+						if (sloop > intersectidx0) intersectidx0=sloop;
+						if (sloop < intersectidx1) intersectidx1=sloop;
+							
+						coordsY[y][x].intersectsWithVisibleObjectAtStep=sloop;
+							
+						RGB ff;
+						getRGBColor(cubecol,ff);
+						coordsY[y][x].R=ff.R;
+						coordsY[y][x].G=ff.G;
+						coordsY[y][x].B=ff.B;
+						break; // intersection found
 					}
-				} 
-			} // for x
-		} // for y
-		
-		if (scrschneidet<=0) {
-			if (erster==0) {
-				// exit loop: no part of the cube (not the object) intersected with
-				break;
-			}
-		} else if (erster>0) erster=0;
-		
-	} // while
+				} else {
+					coordsY[y][x] += vektor;
+				}
+			} // while
+		} // for x
+	} // for y
+	
+	int c1=clock();
+	printf("(%.0lf sec screen)\n",(double)(c1-c0)/CLOCKS_PER_SEC);
 	
 	// dimming by distance and normal vector
 	printf("\ndimming screen pixels ...\n");
+
 	dimm(0.75,intersectidx0,intersectidx1);
 	dimmByNormal();
-	
-	if (schrittErsterTreffer>0) if (schrittErsterTreffer==ersterSchritt) {
-		LOGMSG("Cube error. Not able to find object.\n");
-		exit(99);
-	}
 }
 
 void swap(Coord& a,Coord& b) {
@@ -2443,17 +3563,322 @@ Coord& Coord::operator+=(const Coord& a) {
 	return *this; 
 }
 
+#ifdef _LONGDOUBLE
+void minimaxldAB(long double& mi,long double& ma,const long double a,const long double b) {
+	if (a < b) { mi=a; ma=b; }
+	else { mi=b; ma=a; }
+}
+
+void minimaxldABCD(long double& mi,long double& ma,const long double a,const long double b,const long double c,const long double d) {
+	long double micd,macd;
+	minimaxldAB(mi,ma,a,b);
+	minimaxldAB(micd,macd,c,d);
+	if (micd < mi) mi=micd;
+	if (macd > ma) ma=macd;
+}
+#endif
+
+#ifdef _DOUBLE
+void minimaxdAB(double& mi,double& ma,const double a,const double b) {
+	if (a < b) { mi=a; ma=b; }
+	else { mi=b; ma=a; }
+}
+
+void minimaxdABCD(double& mi,double& ma,const double a,const double b,const double c,const double d) {
+	double micd,macd;
+	minimaxdAB(mi,ma,a,b);
+	minimaxdAB(micd,macd,c,d);
+	if (micd < mi) mi=micd;
+	if (macd > ma) ma=macd;
+}
+#endif
+
+#ifdef _F107
+void minimaxF107AB(f107_o& mi,f107_o& ma,const f107_o a,const f107_o b) {
+	if (a < b) { mi=a; ma=b; }
+	else { mi=b; ma=a; }
+}
+
+void minimaxF107ABCD(f107_o& mi,f107_o& ma,const f107_o a,const f107_o b,const f107_o c,const f107_o d) {
+	f107_o micd,macd;
+	minimaxF107AB(mi,ma,a,b);
+	minimaxF107AB(micd,macd,c,d);
+	if (micd < mi) mi=micd;
+	if (macd > ma) ma=macd;
+}
+#endif
+
+#ifdef _QUADMATH
+void minimaxQDAB(__float128& mi,__float128& ma,const __float128 a,const __float128 b) {
+	if (a < b) { mi=a; ma=b; }
+	else { mi=b; ma=a; }
+}
+
+void minimaxQDABCD(__float128& mi,__float128& ma,const __float128 a,const __float128 b,const __float128 c,const __float128 d) {
+	__float128 micd,macd;
+	minimaxQDAB(mi,ma,a,b);
+	minimaxQDAB(micd,macd,c,d);
+	if (micd < mi) mi=micd;
+	if (macd > ma) ma=macd;
+}
+#endif
+
+// RevCGBlock
+// static reverse cell graph at the given SCREENWIDTH and REVCGBLOCKWIDTH
+
+RevCGBlock::RevCGBlock() {
+	howmany=0;
+	memused=0;
+}
+
+void RevCGBlock::addParent(const int ax,const int ay,const int az) {
+	if (
+		(ax < 0) ||	(ay < 0) || (az < 0) ||
+		(ax >= REVCGmaxnumber) ||
+		(ay >= REVCGmaxnumber) ||
+		(az >= REVCGmaxnumber)
+	) {
+		LOGMSG4("Implementation error. Parent at %i,%i,%i not valid.\n",ax,ay,az);
+		return; 
+	}
+	
+	if (parent == NULL) {
+		parent=parentmgr->getParentSpace(memused);
+		howmany=0;
+		if (!parent) {
+			LOGMSG("Memory failure for parent.\n");
+			exit(99);
+		}
+	}
+	
+	parent[howmany].BX=ax;
+	parent[howmany].BY=ay;
+	parent[howmany].BZ=az;
+	howmany++;
+}
+
+// ParentManager
+
+ParentManager::ParentManager() {
+	lastallocated=NULL;
+	memused=0;
+	freefrom=0;
+	anzptr=0;
+}
+
+ParentManager::~ParentManager() {
+	for(int32_t i=0;i<anzptr;i++) {
+		if (ptr[i]) delete[] ptr[i];
+	}
+	anzptr=0;
+}
+
+Parent* ParentManager::getParentSpace(const int32_t aneeded) {
+	if (
+		(!lastallocated) ||
+		( (memused-freefrom) < aneeded)
+	) {
+		// allocate new memory in 1 GB chunks
+		// deleting is done in a dirty manner when
+		// program ends
+		if (anzptr >= MAXPTR) {
+			LOGMSG("Error. Memory parentManager.\n");
+			exit(99);
+		}
+		printf("x");
+		int64_t all=CHUNKSIZE / sizeof(Parent);
+		ptr[anzptr]=lastallocated=new Parent[all];
+		anzptr++;
+		if (!lastallocated) {
+			LOGMSG("Error/2. Memory parentManager.\n");
+			exit(99);
+		}
+		memused=all;
+		freefrom=0;
+	}
+	
+	int32_t ret=freefrom;
+	freefrom += aneeded;
+	return (&lastallocated[ret]);
+}
+
+// RevCGBlockManager
+
+RevCGBlockManager::RevCGBlockManager() {
+	lastallocated=NULL;
+	memused=0;
+	freefrom=0;
+	anzptr=0;
+}
+
+RevCGBlockManager::~RevCGBlockManager() {
+	for(int32_t i=0;i<anzptr;i++) {
+		if (ptr[i]) delete[] ptr[i];
+	}
+	anzptr=0;
+}
+
+RevCGBlock* RevCGBlockManager::getMemory(const int32_t aneeded) {
+	if (
+		(!lastallocated) ||
+		( (memused-freefrom) < aneeded)
+	) {
+		// allocate new memory in 1 GB chunks
+		// deleting is done in a dirty manner when
+		// program ends
+		if (anzptr >= MAXPTR) {
+			LOGMSG("Error. Memory parentManager.\n");
+			exit(99);
+		}
+		printf("x");
+		int64_t all=CHUNKSIZE / sizeof(RevCGBlock);
+		ptr[anzptr]=lastallocated=new RevCGBlock[all];
+		anzptr++;
+		if (!lastallocated) {
+			LOGMSG("Error/2. Memory RevCGBlockManager.\n");
+			exit(99);
+		}
+		memused=all;
+		freefrom=0;
+	}
+	
+	int32_t ret=freefrom;
+	freefrom += aneeded;
+	return (&lastallocated[ret]);
+}
+
+void construct_static_reverse_cellgraph(void) {
+	// allocate memory
+	data->revcgZ_YX=new PRevCGBlock[REVCGmaxnumber];
+	
+	for(int z=0;z<REVCGmaxnumber;z++) {
+		data->revcgZ_YX[z]=revcgmanager->getMemory(REVCGmaxnumberQ);
+		if (!data->revcgZ_YX[z]) {
+			LOGMSG("Memory. Reverse cell graph/3\n");
+			exit(99);
+		}
+
+		for(int32_t i=0;i<REVCGmaxnumberQ;i++) {
+			data->revcgZ_YX[z][i].howmany=0;
+			data->revcgZ_YX[z][i].memused=0;
+			data->revcgZ_YX[z][i].parent=NULL;
+		}
+	}
+	
+	SpaceCube A,bbxfA;
+	
+	const NTYP DD=REVCGBLOCKWIDTH*scaleRangePerPixel;
+	int32_t parentx,parenty,parentz;
+	
+	for(int32_t dl=1;dl<=2;dl++) {
+		// first pass: calculuate how many are nedded per square
+		// 2nd pass: build cell graph as array
+		if (dl==1) printf("\ncounting parents ...\n");
+		else printf("setting parents to squares ... ");
+
+		for(int32_t z=0;z<SCREENWIDTH;z+=REVCGBLOCKWIDTH) {
+			A.z0=z*scaleRangePerPixel + RANGE0;
+			A.z1=A.z0+DD;
+			parentz=(z >> REVCGBITS);
+			
+			for(int32_t y=0;y<SCREENWIDTH;y+=REVCGBLOCKWIDTH) {
+				parenty=(y >> REVCGBITS);
+				A.y0=y*scaleRangePerPixel + RANGE0;
+				A.y1=A.y0+DD;
+		
+				for(int32_t x=0;x<SCREENWIDTH;x+=REVCGBLOCKWIDTH) {
+					parentx=(x >> REVCGBITS);
+					A.x0=x*scaleRangePerPixel + RANGE0;
+					A.x1=A.x0+DD;
+			
+					getBoundingBoxfA(A,bbxfA);
+			
+					if (CUBE_LIES_ENTIRELY_IN_SPECEXT(bbxfA) > 0) {
+						continue;
+					}
+
+					ScreenCube scr;
+					// trims also
+					scr.x0=scrcoord0(bbxfA.x0);
+					scr.x1=scrcoord0(bbxfA.x1);
+					scr.y0=scrcoord0(bbxfA.y0);
+					scr.y1=scrcoord0(bbxfA.y1);
+					scr.z0=scrcoord0(bbxfA.z0);
+					scr.z1=scrcoord0(bbxfA.z1);
+					
+					// convert to reverse cell graph coordinates
+					scr.x0 >>= REVCGBITS;
+					scr.x1 >>= REVCGBITS;
+					scr.y0 >>= REVCGBITS;
+					scr.y1 >>= REVCGBITS;
+					scr.z0 >>= REVCGBITS;
+					scr.z1 >>= REVCGBITS;
+			
+					if (dl==1) {
+						// just counting
+						// scr is REVCGBLOCK-indices, not screen
+						for(int32_t bz=scr.z0;bz<=scr.z1;bz++) {
+							for(int32_t by=scr.y0;by<=scr.y1;by++) {
+								int64_t yoffset=(int64_t)by*REVCGmaxnumber;
+								for(int32_t bx=scr.x0;bx<=scr.x1;bx++) {
+									data->revcgZ_YX[bz][yoffset+bx].memused++;
+								}
+							}
+						} // bz
+					} else {
+						// setting parents to square
+						for(int32_t bz=scr.z0;bz<=scr.z1;bz++) {
+							for(int32_t by=scr.y0;by<=scr.y1;by++) {
+								int64_t yoffset=(int64_t)by*REVCGmaxnumber;
+								for(int32_t bx=scr.x0;bx<=scr.x1;bx++) {
+									data->revcgZ_YX[bz][yoffset+bx].addParent(parentx,parenty,parentz);
+								}
+							} // by
+						}// bz
+					} // else
+				} // x
+			} // y
+		} // z
+	} // passes
+	
+	/*
+	// ausgeben
+	printf("\nrevcg\n");
+	for(int z=0;z<REVCGmaxnumber;z++) {
+		for(int y=0;y<REVCGmaxnumber;y++) {
+			for(int x=0;x<REVCGmaxnumber;x++) {
+				printf("(%i,%i,%i): ",x,y,z);
+				for(int i=0;i<data->revcgZ_YX[z][y*REVCGmaxnumber+x].howmany;i++) {
+					printf("/%i,%i,%i/ ",
+						data->revcgZ_YX[z][y*REVCGmaxnumber+x].parent[i].BX,
+						data->revcgZ_YX[z][y*REVCGmaxnumber+x].parent[i].BY,
+						data->revcgZ_YX[z][y*REVCGmaxnumber+x].parent[i].BZ
+					);
+				}
+				printf("\n");
+			}
+		}
+	}
+	*/
+}
+
+int32_t makePowerOf2(int32_t& avalue) {
+	return (1 << ( (int32_t)ceil(log(avalue)/log(2.0)) ) );
+}
+
 int main(int argc,char** argv) {
+	int cl0=clock();
+	ctrcpf3ausser=0;
 	getBoundingBoxfA=getBoundingBoxfA_makin;
 	_FUNC=FUNC_MAKIN;
 
 	printf("juliatsa3dcore\n  CMD=CALC or CMD=PERIOD\n  FUNC=string / GRAY / TWDB=n / LEN=n / RANGE=n\n");
 	printf("  C=x,y,z or x,x,y,y,z,z or CI=nx,ny,nz or CI=nx0,nx1,ny0,ny1,nz0,nz1\n");
 	printf("  A,B=x,y,z or AI,BI=nx,ny,nz / E,F,...Q=r\n");
+	printf("  REVCG=n\n");
 	flog=fopen("juliatsa3dcore.log","at");
 	fprintf(flog,"\n\n----------------------\n\n");
 	
-	initRGBPal();
 	CMD=CMD_PERIODICITY;
 	char fn[1024];
 
@@ -2471,6 +3896,14 @@ int main(int argc,char** argv) {
 			} else
 			if (strstr(argv[i],"GRAY")==argv[i]) {
 				GRAY_IS_TRANSPARENT=0;
+			} else
+			if (strstr(argv[i],"CY1C=")==argv[i]) {
+				int a;
+				if (sscanf(&argv[i][5],"%i",&a) == 1) _CYCLE1COLOR=a;
+				else if (strstr(argv[i],"=PUR")) _CYCLE1COLOR=0;
+				else if (strstr(argv[i],"=RED")) _CYCLE1COLOR=1;
+				else if (strstr(argv[i],"=CYA")) _CYCLE1COLOR=2;
+				else if (strstr(argv[i],"=GRE")) _CYCLE1COLOR=3;
 			} else
 			if (strstr(argv[i],"FUNC=")==argv[i]) {
 				_FUNC=FUNC_MAKIN;
@@ -2497,6 +3930,10 @@ int main(int argc,char** argv) {
 						(int64_t)floor(vz0*DENOM225)
 					);
 				}
+			} 
+			else if (strstr(argv[i],"REVCG=")==argv[i]) {
+				int a;
+				if (sscanf(&argv[i][6],"%i",&a) == 1) REVCGBITS=a;
 			} 
 			else if (strstr(argv[i],"CI=")==argv[i]) {
 				int64_t vx0,vx1,vy0,vy1,vz0,vz1;
@@ -2550,15 +3987,15 @@ int main(int argc,char** argv) {
 				}
 			} else
 			if (strstr(argv[i],"RANGE=")==argv[i]) {
-				int64_t a;
-				if (sscanf(&argv[i][6],"%I64d",&a) == 1) {
+				int32_t a;
+				if (sscanf(&argv[i][6],"%i",&a) == 1) {
 					if (a<0) a=-a;
+					makePowerOf2(a);
 					RANGE0=-a;
 					RANGE1= a;
 				}
 			} else
 			if (argv[i][1]=='=') {
-				// eine andere Variable
 				double a;
 				if (sscanf(&argv[i][2],"%lf",&a) == 1) {
 					switch (argv[i][0]) {
@@ -2580,18 +4017,48 @@ int main(int argc,char** argv) {
 		} // i
 	}
 	
+	// after reading in command line: cycle1 color could be swapped
+	initRGBPal();
+
 	REFINEMENTLEVEL=(int)ceil(log(SCREENWIDTH)/log(2.0));
+
+	if (REVCGBITS < 4) {
+		// no reverse cell graph
+		REVCGBITS=0;
+		REVCGBLOCKWIDTH=1; // needed in _definite as loop increment
+		REVCGmaxnumber=1;
+		REVCGmaxnumberQ=1;
+	} else {
+		// SCREENWIDTH / (2^REVCGBITS) <= 2^15
+		// REVCG allocated en bloc => adjust REVCGBITS
+		// revcg-Parents numbered with 16 bit
+		while ( (SCREENWIDTH >> REVCGBITS) > (1 << 15)) REVCGBITS++;
+	
+		REVCGBLOCKWIDTH=(1 << REVCGBITS);
+		if (SCREENWIDTH >= REVCGBLOCKWIDTH) {
+			REVCGmaxnumber=SCREENWIDTH >> REVCGBITS;
+		} else REVCGmaxnumber=1;
+		REVCGmaxnumberQ=REVCGmaxnumber*REVCGmaxnumber;
+	}
+	
 	// calculate the width of a voxel
 	calc();
 	
 	// sets function pointers and filename's principal part
-	setfunc(fn);
+	if (setfunc_and_bittest(fn) <= 0) {
+		LOGMSG("\n!!! datatype DOES NOT provide enough precision\n\n");
+	} else {
+		LOGMSG("datatype provides enough precision\n");
+	}
 	LOGMSG2("\n%s\n",fn);
-	
-	// check for sufficient datatype precision
-	bitTest();
-	
+		
 	printf("initialising main object ...\n");
+	
+	if (REVCGBITS>=4) {
+		revcgmanager=new RevCGBlockManager;
+		parentmgr=new ParentManager;
+	}
+	
 	data=new Data3Ddyn;
 	// reading and increasing data
 	int32_t geladen=data->readRaw();
@@ -2604,12 +4071,19 @@ int main(int argc,char** argv) {
 	
 	//////////////////////////////////////////////
 	
-	// ain routine to detect new white and potnetially white cells
-	data->search_directWhite();
+	if (REVCGBITS>=4) {
+		construct_static_reverse_cellgraph();
+	}
+	
+	// 2-step approach allows earlier break from checking a
+	// bounding box and prevents haven to backpropagate e.g. GRAY_POTW
+	// if at any later point the voxel would turn white
+	data->search_definite();
+	data->search_potw();
 
 	//////////////////////////////////////////////
 
-	printf("\ncoloring interior ");
+	printf("\ncoloring potential interior ");
 	// everything gray but not potentially white has no path
 	// to white and is therefore bounded
 	int32_t schwarz=data->coloring_black();
@@ -2619,6 +4093,11 @@ int main(int argc,char** argv) {
 	fflush(flog);
 	printf("done. Safe to close window.\n");
 	
+	if (REVCGBITS>=4) {
+		printf("\nfreeing reverse cell graph memory ...\n");
+		freeRevCGMem();
+	}
+
 	if (
 		(CMD == CMD_CALC) || 
 		(schwarz<=0)
@@ -2637,7 +4116,7 @@ int main(int argc,char** argv) {
 			internalViewer(fn);
 		}
 	}
-
+	
 	if (
 		(CMD==CMD_PERIODICITY) &&
 		(schwarz>0)
@@ -2645,7 +4124,7 @@ int main(int argc,char** argv) {
 		// detects and colors periodic cycles and their basins
 		
 		// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-		// NOTE: the data-structure struct data3d is no longer
+		// NOTE: the data-structure struct data is no longer
 		// containing only CC_xxx colors
 		// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -2658,9 +4137,24 @@ int main(int argc,char** argv) {
 		}
 	}
 	
-	fclose(flog);
+	LOGMSG2("%I64d bounding boxes calculated in total\n",ctrbbxfa);
+	
 	delete data;
 	if (cycles) delete[] cycles;
+	
+	int cl1=clock();
+	LOGMSG2("%.0lf sec duration\n",
+		(double)(cl1-cl0)/(double)CLOCKS_PER_SEC);
+	fclose(flog);
+	
+	if (revcgmanager) {
+		delete revcgmanager;
+		revcgmanager=NULL;
+	}
+	if (parentmgr) {
+		delete parentmgr;
+		parentmgr=NULL;
+	}
 	
     return 0;
 }
